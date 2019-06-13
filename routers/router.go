@@ -51,8 +51,8 @@ func front() {
 	beego.Router("/user/reg", &HomeControllers.UserController{}, "get,post:Reg")
 	beego.Router("/user/sendmail", &HomeControllers.UserController{}, "get:SendMail")
 	beego.Router("/upload", &HomeControllers.UploadController{}, "get:Get")
-	beego.Router("/segwd", &HomeControllers.UploadController{}, "get:SegWord")
 	beego.Router("/upload", &HomeControllers.UploadController{}, "post:Post")
+	beego.Router("/segwd", &HomeControllers.UploadController{}, "get:SegWord")
 	beego.Router("/search/*", &HomeControllers.SearchController{})
 	beego.Router("/view/:id", &HomeControllers.ViewController{})
 	beego.Router("/comment/:id", &HomeControllers.ViewController{}, "post:Comment")
@@ -61,7 +61,7 @@ func front() {
 	beego.Router("/downfree", &HomeControllers.ViewController{}, "get:DownFree")
 	beego.Router("/doc/check", &HomeControllers.BaseController{}, "get:DocExist")
 	beego.Router("/pages/:page", &HomeControllers.BaseController{}, "get:Pages")
-	beego.Router("/*", &HomeControllers.BaseController{}, "get:StaticFile")
+	beego.Router("/*", &HomeControllers.StaticController{}, "get:Static")
 }
 
 //后台路由
@@ -85,6 +85,8 @@ func back() {
 	beego.Router("/admin/doc/remark", &AdminControllers.DocController{}, "get,post:RemarkTpl")
 	beego.Router("/admin/doc/list/*", &AdminControllers.DocController{}, "get:List")
 	beego.Router("/admin/sys", &AdminControllers.SysController{}, "get,post:Get")
+	beego.Router("/admin/cloud-store", &AdminControllers.SysController{}, "get:CloudStore")
+	beego.Router("/admin/cloud-store", &AdminControllers.SysController{}, "post:SetCloudStore")
 	beego.Router("/admin/sys/handle-logs", &AdminControllers.SysController{}, "get:HandleLogs") //下载或者删除日志文件
 	beego.Router("/admin/seo", &AdminControllers.SeoController{})
 	beego.Router("/admin/seo/sitemap", &AdminControllers.SeoController{}, "get:UpdateSitemap") //更新站点地图
@@ -103,5 +105,5 @@ func back() {
 	beego.Router("/admin/report", &AdminControllers.ReportController{})
 	beego.Router("/admin/elasticsearch/rebuild", &AdminControllers.SysController{}, "get:RebuildAllIndex") //重建全量索引
 	beego.Router("/admin/test/send-email", &AdminControllers.SysController{}, "get:TestForSendingEmail")
-	beego.Router("/admin/test/ping-oss", &AdminControllers.SysController{}, "get:TestOSS")
+	//beego.Router("/admin/test/ping-oss", &AdminControllers.SysController{}, "get:TestOSS")
 }

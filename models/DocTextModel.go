@@ -1,7 +1,7 @@
 package models
 
 import (
-	"github.com/TruthHun/DocHub/helper"
+	"github.com/astaxie/beego"
 	"github.com/astaxie/beego/orm"
 )
 
@@ -10,7 +10,6 @@ type DocText struct {
 	Id      int    `orm:"Column(Id)"`
 	Md5     string `orm:"size(32);default();column(Md5)"`       //文档的md5，之所以存储md5而不是文档的存档id，主要是因为文档在这之前没录入数据库
 	Content string `orm:"size(5000);default();column(Content)"` //文档提取到的文档内容
-	Status  bool   `orm:default(false);column(Status)`          //内容状态是否可用，如果可用，则会用于文档摘要的显示，否则不用于摘要显示
 }
 
 func NewDocText() *DocText {
@@ -31,7 +30,7 @@ func (this *DocText) GetDescByMd5(md5str interface{}, length ...int) (desc strin
 	if len(length) > 0 {
 		l = length[0]
 	}
-	return helper.SubStr(this.Content, 0, l)
+	return beego.Substr(this.Content, 0, l)
 }
 
 //根据存档表的id获取文档摘要，默认获取255个字符长度

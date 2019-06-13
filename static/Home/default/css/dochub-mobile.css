@@ -54,6 +54,8 @@
     .wenku-footer{padding: 15px 0px;}
     .wenku-footer-dark{padding: 30px 15px;}
 
+    #wenku-carousel .carousel-inner img{height: auto;}
+
     /* 列表页 */
 
     #wenku-list .wenku-main .wenku-right{width: 100%;padding-left: 0px;}
@@ -68,7 +70,9 @@
     #wenku-list .wenku-left .panel-body li.clearfix .help-block>span{display: inline-block;}
     .pagination{padding: 0px;margin: 5px 0px;}
     .pagination li{margin-right: 1px;}
-    .pagination li>a, .pagination li>span{border-left: 0px;}
+    .pagination li>a, .pagination li>span{
+        border-left: 0px;min-width: auto;
+    }
     #wenku-list .wenku-left .col-xs-11 .help-block{margin-top: 5px;}
 
 
@@ -119,6 +123,9 @@
     #wenku-reg .form-horizontal .form-group .col-sm-6{width: 50%;display: inline-block;padding-right: 0px;}
     #wenku-reg .form-horizontal .form-group .col-sm-4{width: 50%;float: right;}
     #wenku-reg .col-xs-4{width: 100%;padding: 0px;}
+    #wenku-reg .form-header{padding: 10px 15px;}
+    #wenku-reg .login-form .form-box{padding: 25px 15px;}
+    #wenku-reg .form-footer{padding: 5px 15px;}
 
     /* 搜索 */
     #wenku-search .wenku-top{display: none;}
@@ -136,5 +143,6 @@
     #wenku-search .container .col-xs-3 .panel-default > .panel-heading{border-color:#ffffff;}
     #wenku-search .wenku-left .panel-body li a.active, #wenku-search .wenku-left .panel-body li a:hover{background-color: #ffffff;}
     #wenku-search .wenku-left ul{margin-bottom: 10px;}
+    #wenku-search .wenku-result{min-height: auto;}
 }
 

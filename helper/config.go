@@ -18,7 +18,7 @@ import (
 //@param            key             键
 //@param			def				default，即默认值
 //@return           val             值
-func GetConfig(cate string, key string, def ...string) string {
+func GetConfig(cate ConfigCate, key string, def ...string) string {
 	if val, ok := ConfigMap.Load(fmt.Sprintf("%v.%v", cate, key)); ok {
 		return val.(string)
 	}
@@ -32,7 +32,7 @@ func GetConfig(cate string, key string, def ...string) string {
 //@param            cate            配置分类
 //@param            key             键
 //@return           val             值
-func GetConfigBool(cate string, key string) (val bool) {
+func GetConfigBool(cate ConfigCate, key string) (val bool) {
 	value := GetConfig(cate, key)
 	if value == "true" || value == "1" {
 		val = true
@@ -44,7 +44,7 @@ func GetConfigBool(cate string, key string) (val bool) {
 //@param            cate            配置分类
 //@param            key             键
 //@return           val             值
-func GetConfigInt64(cate string, key string) (val int64) {
+func GetConfigInt64(cate ConfigCate, key string) (val int64) {
 	val, _ = strconv.ParseInt(GetConfig(cate, key), 10, 64)
 	return
 }
@@ -53,7 +53,7 @@ func GetConfigInt64(cate string, key string) (val int64) {
 //@param            cate            配置分类
 //@param            key             键
 //@return           val             值
-func GetConfigFloat64(cate string, key string) (val float64) {
+func GetConfigFloat64(cate ConfigCate, key string) (val float64) {
 	val, _ = strconv.ParseFloat(GetConfig(cate, key), 64)
 	return
 }
@@ -70,9 +70,9 @@ func setDefaultConfig() {
 		beego.BConfig.EnableGzip = true //开启gzip压缩
 
 		//程序安装的时候不启用，安装完成之后必须启用
-		beego.BConfig.WebConfig.EnableXSRF = false                                                        //启用XSRF
-		beego.BConfig.WebConfig.XSRFKey = MyMD5(fmt.Sprintf("%v", time.Now().UnixNano()) + RandStr(5, 3)) //生成随机key
-		beego.BConfig.WebConfig.XSRFExpire = 3600                                                         //过期时间
+		beego.BConfig.WebConfig.EnableXSRF = false                                                           //启用XSRF
+		beego.BConfig.WebConfig.XSRFKey = MD5Crypt(fmt.Sprintf("%v", time.Now().UnixNano()) + RandStr(5, 3)) //生成随机key
+		beego.BConfig.WebConfig.XSRFExpire = 3600                                                            //过期时间
 
 		//SESSION基本配置
 		beego.BConfig.WebConfig.Session.SessionOn = true
@@ -87,7 +87,7 @@ func setDefaultConfig() {
 }
 
 //生成app.conf配置文件
-func GenerateAppConf(host string, port int, username, password, database, prefix string) (err error) {
+func GenerateAppConf(host string, port int, username, password, database, prefix string, charset ...string) (err error) {
 	if !IsInstalled { //程序未安装状态才能生成app.conf文件
 		os.Mkdir("conf", os.ModePerm)
 		fileContent := `
@@ -155,8 +155,8 @@ database=%v
 # 表前缀
 prefix=%v
 
-# 字符串类型【不要修改，整个程序都是utf-8的】。
-charset=utf8
+# 数据库字符编码
+charset=%v
 
 #设置最大空闲连接
 maxIdle= 50
@@ -169,6 +169,10 @@ maxConn= 300
 `
 		cs, _ := ConfigMap.Load("CookieSecret")
 		se, _ := ConfigMap.Load("StaticExt")
+		char := "utf8" //默认字符编码
+		if len(charset) > 0 {
+			char = charset[0]
+		}
 		//配置项配置
 		fileContent = fmt.Sprintf(
 			fileContent,
@@ -176,7 +180,7 @@ maxConn= 300
 			beego.BConfig.WebConfig.XSRFExpire,
 			cs,
 			se,
-			host, port, username, password, database, prefix,
+			host, port, username, password, database, prefix, char,
 		)
 		err = ioutil.WriteFile("conf/app.conf", []byte(fileContent), os.ModePerm)
 	}

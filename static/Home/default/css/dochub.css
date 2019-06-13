@@ -8,6 +8,7 @@
 .visible-mobile{display: none;}
 .hidden-mobile{display: block;}
 body{background-color: #f6f6f6;}
+.zero-height{height: 0px !important;overflow: hidden !important;}
 .navbar-fixed-bottom,.navbar-fixed-top{min-width:970px}
 .lead{font-size:16px}
 .page-header{margin-bottom:30px}
@@ -52,6 +53,8 @@ body{background-color: #f6f6f6;}
 
 /*以上是禁止响应式的CSS代码*/
 
+
+.carousel-indicators li{width: 12px;height: 12px;margin:0px 2px;}
 
 /*icons [start]*/
 .icon{width:18px;height: 18px;display: inline-block;background: url(../img/all_icon.png) no-repeat;margin-right: 3px;}
@@ -182,7 +185,7 @@ textarea{resize: none;}
 #wenku-index .wenku-avatar{height: 80px;width: 80px;margin: 15px;border-radius:50%;}
 #wenku-index .wenku-avatar img{border-radius: 50%;}
 #wenku-index .wenku-username{margin-top: 10px;}
-#wenku-index .wenku-userinfo{border-top: 1px solid #EEEEEE;margin-top: 15px;padding-top: 1px;padding-bottom:7px;width: 230px;margin-left: 15px;}
+#wenku-index .wenku-userinfo{border-top: 1px solid #EEEEEE;margin-top: 15px;padding-top: 5px;padding-bottom:10px;width: 230px;margin-left: 15px;}
 
 #wenku-index .wenku-cate{background-color: #FFFFFF;margin-bottom: 15px;padding: 15px;}
 #wenku-index .wenku-cate a{display: inline-block;font-size: 16px;margin-right: 5px;}
@@ -196,7 +199,18 @@ textarea{resize: none;}
 #wenku-index .wenku-item img{width:195px;border: 1px solid #EFEFEF;}
 #wenku-index .wenku-item a.wenku-text-ellipsis img{display: none;}
 #wenku-index .wenku-loginbox .panel-body{padding-bottom: 0px;}
-#wenku-index .wenku-loginbox{padding: 11px 0px;}
+#wenku-index .wenku-loginbox{padding: 11px 0px 0px;}
+#wenku-index .wenku-loginbox .btn-primary{margin-bottom: 15px;}
+#wenku-index .wenku-loginbox .panel-body{padding-bottom: 8px;}
+#wenku-index .quick-login{height: 40px;line-height: 40px;margin-bottom: 0px;}
+#wenku-index .quick-login .iconfont{font-size: 25px;margin-left: 5px;}
+#wenku-index .quick-login .icon-weixin{font-size: 23px;color: #00bf75;}
+#wenku-index .quick-login .icon-weibo{font-size: 23px;color: #fa4151;}
+#wenku-index .quick-login .icon-QQ{font-size: 26px;color: #5fa3e4;}
+#wenku-index .quick-login .iconfont:hover{color: #1abc9c;}
+
+#wenku-carousel .carousel-inner img{height: 323px;width: 100%;}
+
 /*#wenku-index .wenku-item .panel-body{padding-bottom: 6px;}*/
 /*wenku page index [end]*/
 
@@ -242,7 +256,12 @@ textarea{resize: none;}
 #wenku-content .wenku-right .panel .panel-body{padding-bottom: 5px;}
 #wenku-content .wenku-right .nav-tabs{margin-bottom: 10px;}
 #wenku-content .wenku-right .nav-tabs li{border-bottom: 0px;}
-#wenku-content .wenku-unview h1{box-shadow: 0px 0px 10px #ddd; padding:8px; margin:5px 0px 15px; -webkit-border-radius:5px; -moz-border-radius:5px;border-radius:5px;}
+#wenku-content .wenku-unview h1{
+    border-bottom: 1px solid #ddd;
+    padding: 0px 0px 15px;
+    margin: 5px 0px 15px;
+    border-radius: 0px;
+}
 #wenku-content .wenku-unview li{border-bottom: 1px dashed #EFEFEF;line-height: 35px;}
 #wenku-content .wenku-comment form{margin-top:15px;}
 #wenku-content .wenku-score .fa-star{color: #FFAC2D;}
@@ -260,6 +279,7 @@ textarea{resize: none;}
 #wenku-content .wenku-viewer .wenku-viewer-img{border-bottom: 5px solid #F6F6F6;display: block;width: 100%;}
 #wenku-content .wenku-viewer-more{border-bottom: 5px solid #F6F6F6;padding: 30px 0px 20px;}
 #wenku-content .wenku-viewer-more .btn{margin: 10px 0px;}
+#wenku-content .active-forbidden a{cursor: default;background-color: #bdc3c7 !important;border-color:#bdc3c7 !important; }
 
 /*wenku page content [end]*/
 
@@ -329,6 +349,7 @@ textarea{resize: none;}
 #wenku-search .wenku-left .panel-body li a.active,#wenku-search .wenku-left .panel-body li a:hover{background-color: #efefef;color:#16a085;}
 #wenku-search .wenku-left .panel-body li a:hover{font-weight: normal;}
 #wenku-search .col-xs-7{padding-left: 0px;}
+#wenku-search .wenku-result{min-height: 538px;}
 #wenku-search .wenku-result .wenku-title{word-break: break-all;text-overflow: ellipsis;overflow: hidden;white-space: nowrap;}
 #wenku-search .wenku-result a{color: #16a085;font-size: 18px;}
 #wenku-search .wenku-result a img{height: 18px;position: relative;top: -2px;}

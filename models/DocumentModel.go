@@ -2,9 +2,7 @@ package models
 
 import (
 	"fmt"
-	"os"
 	"strings"
-	"time"
 
 	"github.com/TruthHun/DocHub/helper"
 
@@ -13,6 +11,14 @@ import (
 	"strconv"
 
 	"github.com/astaxie/beego/orm"
+)
+
+//文档资源状态，1正常，0文档未转换成功，-1删除，同时把id录入文档回收站id，-2表示删除了文档文件，但是数据库记录还保留。同时后台也看不到该记录
+const (
+	DocStatusFileDeleted int8 = -2
+	DocStatusDeleted     int8 = -1
+	DocStatusConverting  int8 = 0
+	DocStatusNormal      int8 = 1
 )
 
 //文档表
@@ -83,6 +89,41 @@ func GetTableDocumentStore() string {
 	return getTable("document_store")
 }
 
+// 完整的文档内容
+type fullDocument struct {
+	Id          int    `orm:"column(Id)"`
+	Title       string `orm:"column(Title)"`              //文档名称【用户自定义的文档标题】
+	Filename    string `orm:"column(Filename)"`           //文件名[文件的原文件名]
+	Keywords    string `orm:"column(Keywords)"`           //文档标签、关键字
+	Description string `orm:"column(Description)"`        //文档摘要
+	Md5         string `orm:"column(Md5)"`                //文档md5
+	Ext         string `orm:"column(Ext)"`                //文档扩展名，如pdf、xls等
+	ExtCate     string `orm:"column(ExtCate)"`            //文档扩展名分类：word、ppt、text、pdf、xsl，code(这些分类配合图标一起使用，如word_24.png)
+	ExtNum      int    `orm:"column(ExtNum)"`             //文档后缀的对应数字，主要是在coreseek搭建站内搜索时用到
+	Page        int    `orm:"column(Page)"`               //文档页数
+	PreviewPage int    `orm:"column(PreviewPage)"`        //当前文档可预览页数
+	Size        int    `orm:"column(Size)"`               //文档大小
+	ModTime     int    `orm:"column(ModTime)"`            //文档修改编辑时间
+	PreviewExt  string `orm:"column(PreviewExt);size(4)"` //文档预览的图片格式后缀，如jpg、png、svg等，默认svg
+	Width       int    `orm:"column(Width)"`              //svg的原始宽度
+	Height      int    `orm:"column(Height)"`             //svg的原始高度
+	DsId        int    `orm:"column(DsId)"`               //文档存档表Id,DocumentStore Id
+	Uid         int    `orm:"column(Uid)"`                //文档上传用户的id
+	Username    string `orm:"column(Username)"`           //文档上传用户的id
+	ChanelId    int    `orm:"column(ChanelId)"`           //文档所属频道
+	Pid         int    `orm:"column(Pid)"`                //文档一级分类
+	Cid         int    `orm:"column(Cid)"`                //频道下的最底层的分类id（二级分类），如幼儿教育下的幼儿读物等
+	TimeCreate  int    `orm:"column(TimeCreate)"`         //文档上传时间
+	TimeUpdate  int    `orm:"column(TimeUpdate)"`         //文档更新时间
+	Dcnt        int    `orm:"column(Dcnt)"`               //下载次数
+	Vcnt        int    `orm:"column(Vcnt)"`               //浏览次数
+	Ccnt        int    `orm:"column(Ccnt)"`               //收藏次数
+	Score       int    `orm:"column(Score)"`              //默认30000，即表示3.0分。这是为了更准确统计评分的需要
+	ScorePeople int    `orm:"column(ScorePeople)"`        //评分总人数
+	Price       int    `orm:"column(Price)"`              //文档下载价格，0表示免费
+	Status      int8   `orm:"column(Status)"`             //文档资源状态，1正常，0文档未转换成功，-1删除，同时把id录入文档回收站i
+}
+
 //非法文档(侵权或不良信息文档)MD5记录表
 type DocumentIllegal struct {
 	Id  int    `orm:"column(Id)"`                            //文档id
@@ -142,11 +183,11 @@ func (this *Document) IsIllegalById(id interface{}) bool {
 //@return               params          文档信息
 //@return               rows            记录数
 //@return               err             错误
-func (this *Document) GetById(id interface{}) (params orm.Params, rows int64, err error) {
-	var data []orm.Params
+func (this *Document) GetById(id interface{}) (doc fullDocument, err error) {
+	var sql string
 	tables := []string{GetTableDocumentInfo() + " info", GetTableDocument() + " doc", GetTableDocumentStore() + " ds", GetTableUser() + " u"}
 	fields := map[string][]string{
-		"ds":   GetFields(NewDocumentStore()),
+		"ds":   helper.DeleteSlice(GetFields(NewDocumentStore()), "Id"),
 		"info": GetFields(NewDocumentInfo()),
 		"u":    {"Username", "Id Uid"},
 		"doc":  GetFields(NewDocument()),
@@ -156,11 +197,20 @@ func (this *Document) GetById(id interface{}) (params orm.Params, rows int64, er
 		{"doc.Id": "info.Id"},
 		{"u.Id": "info.Uid"},
 	}
-	if sql, err := LeftJoinSqlBuild(tables, on, fields, 1, 1, nil, nil, "info.Id=?"); err == nil {
-		if rows, err = orm.NewOrm().Raw(sql, id).Values(&data); len(data) > 0 {
-			params = data[0]
-		}
+	helper.Logger.Debug("查询字段：%+v", fields)
+
+	sql, err = LeftJoinSqlBuild(tables, on, fields, 1, 1, nil, nil, "info.Id=?")
+	if err != nil {
+		helper.Logger.Error(err.Error())
+		err = errors.New("内部错误：数据查询失败")
+		return
 	}
+	err = orm.NewOrm().Raw(sql, id).QueryRow(&doc)
+	return
+}
+
+func (this *Document) GetDocument(id int, fields ...string) (doc Document) {
+	orm.NewOrm().QueryTable(this).Filter("Id", id).One(&doc, fields...)
 	return
 }
 
@@ -206,387 +256,6 @@ func (this *Document) IsExistByMd5(md5str string) (Id int) {
 	return ds.Id
 }
 
-//处理已经存在了的文档
-func HandleExistDoc(uid int, form FormUpload) error {
-	var ds DocumentStore
-	err := orm.NewOrm().QueryTable(GetTableDocumentStore()).Filter("Md5", form.Md5).One(&ds)
-	if err != nil {
-		return err
-	}
-	doc := Document{
-		Title:       form.Title,
-		Filename:    form.Filename,
-		Keywords:    form.Tags,
-		Description: form.Intro,
-	}
-	docid, _ := orm.NewOrm().Insert(&doc)
-	docinfo := DocumentInfo{
-		Uid:         uid,
-		ChanelId:    form.Chanel,
-		Cid:         form.Cid,
-		Pid:         form.Pid,
-		TimeCreate:  int(time.Now().Unix()),
-		Dcnt:        0,
-		Vcnt:        0,
-		Ccnt:        0,
-		Score:       30000,
-		ScorePeople: 1,
-		Status:      1,
-	}
-	docinfo.Id = int(docid)
-
-	//记录关键字
-	go NewWord().AddWords(form.Tags, docid)
-
-	docinfo.DsId = ds.Id
-	i, err := orm.NewOrm().Insert(&docinfo)
-	if i > 0 && err == nil {
-		SetDocCntIncre(form.Chanel, form.Pid, form.Cid, uid)
-	}
-	return err
-}
-
-//处理上传的PDF文档
-//@param            uid             上传文档的用户ID
-//@param            tmpfile         临时存储的pdf文档
-//@param            form            表单
-func HandlePdf(uid int, tmpfile string, form FormUpload) (err error) {
-	var (
-		pageNum     int
-		previewPage = NewSys().GetByField("PreviewPage").PreviewPage
-		fileInfo    os.FileInfo
-		docId       int64
-		docStoreId  int64
-		o           = orm.NewOrm()
-	)
-
-	//启用事务
-	o.Begin()
-	defer func() {
-		if err == nil {
-			o.Commit()
-			//生成索引
-			go NewElasticSearchClient().BuildIndexById(int(docId))
-		} else {
-			o.Rollback()
-		}
-	}()
-
-	//先用第三方包统计页码，如果不兼容，则在使用自己简单封装的函数获取pdf文档页码。但是好像也有些不兼容
-	if pageNum, err = helper.GetPdfPagesNum(tmpfile); err != nil || pageNum == 0 {
-		if pageNum, err = helper.CountPdfPages(tmpfile); err != nil {
-			helper.Logger.Error(err.Error())
-		}
-	}
-
-	if fileInfo, err = os.Stat(tmpfile); err != nil {
-		helper.Logger.Error(err.Error())
-		return err
-	}
-
-	//文档存档信息
-	docStore := DocumentStore{
-		Md5:         form.Md5,
-		Ext:         form.Ext,
-		Page:        pageNum,
-		Size:        form.Size,
-		ModTime:     int(fileInfo.ModTime().Unix()),
-		PreviewPage: previewPage,
-		PreviewExt:  "svg",
-	}
-	docStore.ExtCate, docStore.ExtNum = helper.GetExtCate(docStore.Ext)
-
-	//文档标题等信息
-	doc := Document{
-		Title:       form.Title,
-		Filename:    form.Filename,
-		Keywords:    form.Tags,
-		Description: form.Intro,
-	}
-
-	//文档基本信息
-	now := int(time.Now().Unix())
-	docInfo := DocumentInfo{
-		Uid:         uid,
-		ChanelId:    form.Chanel,
-		Pid:         form.Pid,
-		Cid:         form.Cid,
-		TimeCreate:  now,
-		TimeUpdate:  now,
-		Dcnt:        0,
-		Vcnt:        0,
-		Ccnt:        0,
-		Score:       30000,
-		ScorePeople: 0,
-		Status:      1,
-		Price:       form.Price,
-	}
-
-	//创建存档信息
-	if _, docStoreId, err = o.ReadOrCreate(&docStore, "Md5"); err != nil {
-		helper.Logger.Error(err.Error())
-		return
-	}
-
-	//记录关键字
-	NewWord().AddWords(form.Tags, docId)
-
-	docId, err = o.Insert(&doc)
-	docInfo.DsId = int(docStoreId)
-
-	docInfo.Id = int(docId)
-	if _, err = o.Insert(&docInfo); err != nil {
-		helper.Logger.Error(err.Error())
-		return
-	}
-
-	//增加文档统计数量
-	SetDocCntIncre(form.Chanel, form.Pid, form.Cid, uid)
-
-	//处理pdf文档，转成svg图片，再将svg图片压缩，上传到OSS预览库
-	go func(tmpfile, md5str string, totalPage int) {
-
-		//把原文档移动到存档库(即私有库)，先暂时不要删除本地的原PDF文件
-		NewOss().MoveToOss(tmpfile, md5str+".pdf", false, false)
-
-		//转化供预览的总页数
-		if previewPage > 0 {
-			totalPage = previewPage
-		}
-
-		//将pdf文件转成svg
-		if err := Pdf2Svg(tmpfile, totalPage, md5str); err != nil {
-			helper.Logger.Error(err.Error())
-		}
-
-		//最后删除本地的PDF文件
-		if err = os.Remove(tmpfile); err != nil {
-			helper.Logger.Error(err.Error())
-		}
-	}(tmpfile, form.Md5, pageNum)
-
-	return err
-}
-
-//处理上传的office文档
-//@param        uid         用户id
-//@param        tmpfile     临时文件
-//@param        form        上传表单
-func HandleOffice(uid int, tmpfile string, form FormUpload) (err error) {
-	//转化成PDF文档，转换成功之后，调用pdf文档处理
-	if err = helper.OfficeToPdf(tmpfile); err != nil {
-		helper.Logger.Error("office文档（%v）处理失败：%v", tmpfile, err.Error())
-		return err
-	}
-
-	pdf := strings.TrimSuffix(tmpfile, "."+form.Ext) + ".pdf"
-
-	//处理pdf
-	if err = HandlePdf(uid, pdf, form); err == nil {
-		//如果转成pdf文档成功，则把原文档移动到OSS存储服务器
-		NewOss().MoveToOss(tmpfile, form.Md5+"."+form.Ext, false, true)
-	} else {
-		helper.Logger.Error("pdf文档（%v）处理错误：%v", pdf, err.Error())
-	}
-
-	return
-}
-
-//处理上传的非Office文档和非PDF文档
-//@param        uid         用户id
-//@param        tmpfile     临时文件
-//@param        form        上传表单
-func HandleUnOffice(uid int, tmpfile string, form FormUpload) (err error) {
-	var (
-		fileInfo          os.FileInfo
-		pdfFile           string
-		o                 = orm.NewOrm()
-		docId, docStoreId int64
-	)
-	if form.Ext != ".umd" { //calibre暂时无法转换umd文档
-		//非umd文档，转PDF
-		if pdfFile, err = helper.UnofficeToPdf(tmpfile); err == nil {
-			//如果转成pdf文档成功，则把原文档移动到OSS存储服务器
-			defer NewOss().MoveToOss(tmpfile, form.Md5+"."+form.Ext, false, true)
-			return HandlePdf(uid, pdfFile, form)
-		} else {
-			//转PDF失败，则作为无法预览的文档处理
-			helper.Logger.Error(err.Error())
-		}
-	}
-
-	//启动事务
-	o.Begin()
-	defer func() {
-		if err == nil {
-			o.Commit()
-			//索引
-			NewElasticSearchClient().BuildIndexById(int(docId))
-		} else {
-			o.Rollback()
-		}
-	}()
-
-	//处理umd文档
-
-	if fileInfo, err = os.Stat(tmpfile); err != nil {
-		return err
-	}
-
-	docStore := DocumentStore{
-		Md5:     form.Md5,
-		Ext:     form.Ext,
-		Page:    0,
-		Size:    form.Size,
-		ModTime: int(fileInfo.ModTime().Unix()),
-	}
-	docStore.ExtCate, docStore.ExtNum = helper.GetExtCate(docStore.Ext)
-
-	doc := Document{
-		Title:       form.Title,
-		Filename:    form.Filename,
-		Keywords:    form.Tags,
-		Description: form.Intro,
-	}
-
-	now := int(time.Now().Unix())
-	docInfo := DocumentInfo{
-		Uid:         uid,
-		ChanelId:    form.Chanel,
-		Pid:         form.Pid,
-		Cid:         form.Cid,
-		TimeCreate:  now,
-		TimeUpdate:  now,
-		Dcnt:        0,
-		Vcnt:        0,
-		Ccnt:        0,
-		Score:       30000,
-		ScorePeople: 1,
-		Status:      1,
-		Price:       form.Price,
-	}
-
-	if _, docStoreId, err = o.ReadOrCreate(&docStore, "Md5"); err != nil {
-		helper.Logger.Error(err.Error())
-		return
-	}
-	if docId, err = o.Insert(&doc); err != nil {
-		helper.Logger.Error(err.Error())
-		return
-	}
-
-	//记录关键字
-	NewWord().AddWords(form.Tags, docId)
-
-	docInfo.Id = int(docId)
-	docInfo.DsId = int(docStoreId)
-	if _, err = o.Insert(&docInfo); err == nil {
-		//把原文档移动到存档库
-		go NewOss().MoveToOss(tmpfile, form.Md5+"."+form.Ext, false, true)
-
-		//增加文档统计数量
-		SetDocCntIncre(form.Chanel, form.Pid, form.Cid, uid)
-	}
-	return
-}
-
-//文档统计增加
-//@param            chanel      文库频道
-//@param            pid         文档一级分类
-//@param            cid         文档二级分类
-func SetDocCntIncre(chanel, pid, cid, uid int) {
-	//文档数量和分类+1
-	Regulate(GetTableCategory(), "Cnt", 1, "`Id` in(?,?,?)", chanel, pid, cid)
-	//全站文档统计+1
-	Regulate(GetTableSys(), "CntDoc", 1, "Id=1")
-	//用户文档数量+1
-	Regulate(GetTableUserInfo(), "Document", 1, "Id=?", uid)
-}
-
-//获取文档列表，其中status不传时，表示获取全部状态的文档，否则获取指定状态的文档，status:-1已删除，0转码中，1已转码
-//排序order全部按倒叙排序，默认是按id倒叙排序，可选值：Id,Dcnt(下载),Vcnt(浏览),Ccnt(收藏)
-func GetDocList(uid, chanelid, pid, cid, p, listRows int, order string, status ...int) (data []orm.Params, rows int64, err error) {
-	var (
-		cond     = make(map[string]interface{})
-		condQues []string
-		args     []interface{}
-		condStr  string
-	)
-
-	switch strings.ToLower(order) {
-	case "dcnt":
-		order = "di.Dcnt desc"
-	case "vcnt":
-		order = "di.Vcnt desc"
-	case "ccnt":
-		order = "di.Ccnt desc"
-	case "score":
-		order = "di.Score desc"
-	default:
-		order = "di.Id desc"
-	}
-
-	if uid > 0 {
-		cond["di.Uid"] = uid
-	}
-
-	if chanelid > 0 {
-		cond["di.ChanelId"] = chanelid
-	}
-
-	if pid > 0 {
-		cond["di.Pid"] = pid
-	}
-
-	if cid > 0 {
-		cond["di.Cid"] = cid
-	}
-
-	for k, v := range cond {
-		condQues = append(condQues, fmt.Sprintf("%v=?", k))
-		args = append(args, v)
-	}
-
-	if len(status) == 1 {
-		condQues = append(condQues, fmt.Sprintf("di.Status in(%v)", status[0]))
-	}
-
-	if len(status) == 2 {
-		condQues = append(condQues, fmt.Sprintf("di.Status in(%v,%v)", status[0], status[1]))
-	}
-
-	condStr = "true"
-	if len(condQues) > 0 {
-		condStr = strings.Join(condQues, " and ")
-	}
-
-	fields := "di.Id,di.`Uid`, di.`Cid`, di.`TimeCreate`, di.`Dcnt`, di.`Vcnt`, di.`Ccnt`, di.`Score`, di.`Status`, di.`ChanelId`, di.`Pid`,c.Title Category,u.Username,d.Title,ds.`Md5`, ds.Id DsId,ds.`Ext`, ds.`ExtCate`, ds.`ExtNum`, ds.`Page`, ds.`Size`"
-
-	sqlFormat := `
-		select %v from %v di left join %v u on di.Uid=u.Id
-		left join %v d on d.Id=di.Id
-		left join %v c on c.Id=di.cid
-		left join %v ds on ds.Id=di.DsId
-		where %v order by %v limit %v,%v
-		`
-
-	sql := fmt.Sprintf(sqlFormat,
-		fields,
-		GetTableDocumentInfo(),
-		GetTableUser(),
-		GetTableDocument(),
-		GetTableCategory(),
-		GetTableDocumentStore(),
-		condStr,
-		order,
-		(p-1)*listRows, listRows,
-	)
-
-	rows, err = orm.NewOrm().Raw(sql, args...).Values(&data)
-
-	return
-}
-
 //文档软删除，即把文档状态标记为-1，操作之后，需要把总文档数量、用户文档数量-1，同时把文档id移入回收站
 func (this *Document) SoftDel(uid int, isAdmin bool, ids ...interface{}) (err error) {
 	var (
@@ -601,112 +270,10 @@ func (this *Document) SoftDel(uid int, isAdmin bool, ids ...interface{}) (err er
 	return nil
 }
 
-//注意：这里只能从回收站进行删除，因为这样就不需要再对统计数据进行增减计算操作了
-//删除文档，这里是彻底删除（会先查询md5，然后根据md5查找到所有文档进行删除），被彻底删除的文档，会被标记为非法文档，不再允许用户上传该文档
-//func (this *Document) DeepDel(ids ...interface{}) (errs []string) {
-//	var (
-//		DocInfo      []DocumentInfo
-//		DocStore     []DocumentStore
-//		DocIllegal   []DocumentIllegal
-//		DsIds, DocId []interface{}
-//		err          error
-//		o            = orm.NewOrm()
-//	)
-//
-//	//查询现有的文档
-//	if _, err := o.QueryTable(GetTableDocumentInfo()).Filter("Id__in", ids...).All(&DocInfo); err != nil {
-//		helper.Logger.Error(err.Error())
-//		errs = append(errs, err.Error())
-//	}
-//
-//	//获取DsId
-//	for _, info := range DocInfo {
-//		DsIds = append(DsIds, info.DsId)
-//	}
-//	//根据DsId查询所有需要删除的文档记录
-//	DocInfo, _, _ = this.GetDocInfoByDsId(DsIds...)
-//
-//	if len(DsIds) > 0 {
-//
-//		//根据DsId查询所有DocumentStore表中的数据
-//		if _, err = orm.NewOrm().QueryTable(GetTableDocumentStore()).Filter("Id__in", DsIds...).All(&DocStore); err != nil {
-//			helper.Logger.Error(err.Error())
-//			errs = append(errs, err.Error())
-//		}
-//
-//		//清空document_store表中的数据
-//		if _, err := orm.NewOrm().QueryTable(GetTableDocumentStore()).Filter("Id__in", DsIds...).Delete(); err != nil {
-//			helper.Logger.Error(err.Error())
-//			errs = append(errs, err.Error())
-//		}
-//	}
-//
-//	//记录非法的md5
-//	for _, store := range DocStore {
-//		var docIllegal = DocumentIllegal{Id: 0, Md5: store.Md5}
-//		orm.NewOrm().Read(&docIllegal, "Md5")
-//		if docIllegal.Id == 0 {
-//			DocIllegal = append(DocIllegal, docIllegal)
-//		}
-//		go func() {
-//			//删除预览文档
-//			if err := NewOss().DelFromOss(true, store.Md5+".pdf"); err != nil {
-//				helper.Logger.Error(err.Error())
-//			}
-//			//删除封面图片
-//			if err := NewOss().DelFromOss(true, store.Md5+".jpg"); err != nil {
-//				helper.Logger.Error(err.Error())
-//			}
-//			//删除原文档
-//			if err := NewOss().DelFromOss(false, store.Md5+"."+store.Ext); err != nil {
-//				helper.Logger.Error(err.Error())
-//			}
-//			if err := NewOss().DelFromOss(false, store.Md5+".pdf"); err != nil {
-//				helper.Logger.Error(err.Error())
-//			}
-//		}()
-//	}
-//	//录入非法文档表
-//	if l := len(DocIllegal); l > 0 {
-//		if _, err := orm.NewOrm().InsertMulti(l, &DocIllegal); err != nil {
-//			helper.Logger.Error(err.Error())
-//			errs = append(errs, err.Error())
-//		}
-//	}
-//
-//	if len(DocId) > 0 {
-//		//清空回收站中的这些非法文档
-//		if _, err := orm.NewOrm().QueryTable(GetTableDocumentRecycle()).Filter("Id__in", DocId...).Delete(); err != nil {
-//			helper.Logger.Error(err.Error())
-//			errs = append(errs, err.Error())
-//		}
-//		//清空document表中的数据
-//		if _, err := orm.NewOrm().QueryTable(GetTableDocument()).Filter("Id__in", DocId...).Delete(); err != nil {
-//			helper.Logger.Error(err.Error())
-//			errs = append(errs, err.Error())
-//		}
-//		//清空document_info表中的数据
-//		if _, err := orm.NewOrm().QueryTable(GetTableDocumentInfo()).Filter("Id__in", DocId...).Delete(); err != nil {
-//			helper.Logger.Error(err.Error())
-//			errs = append(errs, err.Error())
-//		}
-//
-//		//删除这些文档的所有评论记录
-//		if _, err := orm.NewOrm().QueryTable(GetTableDocumentComment()).Filter("Did__in", DocId...).Delete(); err != nil {
-//			helper.Logger.Error(err.Error())
-//			errs = append(errs, err.Error())
-//		}
-//		//处理收藏
-//		go NewCollect().DelByDocId(DocId...)
-//	}
-//
-//	return errs
-//}
-
 //根据document_store表中的id查询document_info表中的数据
 func (this *Document) GetDocInfoByDsId(DsId ...interface{}) (info []DocumentInfo, rows int64, err error) {
 	if l := len(DsId); l > 0 {
-		rows, err = orm.NewOrm().QueryTable(GetTableDocumentInfo()).Limit(l).Filter("DsId__in", DsId...).All(&info)
+		rows, err = orm.NewOrm().QueryTable(GetTableDocumentInfo()).Filter("DsId__in", DsId...).All(&info)
 	}
 	return
 }
@@ -759,8 +326,8 @@ func (this *Document) SetIllegal(ids ...interface{}) (err error) {
 				}
 
 				//将文档移入回收站，主要是避免之前文档没有被删除的情况
-				if errs := NewDocumentRecycle().RemoveToRecycle(0, false, did...); len(errs) > 0 {
-					helper.Logger.Error(strings.Join(errs, "; "))
+				if err = NewDocumentRecycle().RemoveToRecycle(0, false, did...); err != nil {
+					helper.Logger.Error(err.Error())
 				}
 
 				//根据dsid查询文档md5，并把md5录入到非法文档表

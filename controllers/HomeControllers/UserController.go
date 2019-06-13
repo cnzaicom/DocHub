@@ -2,6 +2,7 @@ package HomeControllers
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"strings"
 
@@ -130,7 +131,7 @@ func (this *UserController) Get() {
 		this.Data["Lists"] = data
 		this.Data["Page"] = helper.Paginations(6, helper.Interface2Int(params[0]["Cnt"]), listRows, p, fmt.Sprintf("/user/%v/doc/cid/%v", user["Id"], cid), "sort", sort, "style", style)
 	} else {
-		this.Data["Lists"], _, _ = models.GetDocList(uid, 0, 0, 0, p, listRows, sort, 1)
+		this.Data["Lists"], _, _ = models.GetDocList(uid, 0, 0, 0, p, listRows, sort, 1, 0)
 		this.Data["Page"] = helper.Paginations(6, helper.Interface2Int(user["Document"]), listRows, p, fmt.Sprintf("/user/%v/doc", user["Id"]), "sort", sort, "style", style)
 	}
 
@@ -279,7 +280,7 @@ func (this *UserController) Login() {
 	}
 
 	ModelUser := models.NewUser()
-	users, rows, err := ModelUser.UserList(1, 1, "", "", "u.`email`=? and u.`password`=?", post.Email, helper.MyMD5(post.Password))
+	users, rows, err := ModelUser.UserList(1, 1, "", "", "u.`email`=? and u.`password`=?", post.Email, helper.MD5Crypt(post.Password))
 	if rows == 0 || err != nil {
 		if err != nil {
 			helper.Logger.Error(err.Error())
@@ -336,11 +337,14 @@ func (this *UserController) Reg() {
 	//先验证邮箱验证码是否正确
 	email := this.GetString("email")
 	code := this.GetString("code")
-	sessEmail := fmt.Sprintf("%v", this.GetSession("RegMail"))
-	sessCode := fmt.Sprintf("%v", this.GetSession("RegCode"))
-	if sessEmail != email || sessCode != code {
-		this.ResponseJson(false, "邮箱验证码不正确，请重新输入或重新获取")
+	if this.Sys.CheckRegEmail {
+		sessEmail := fmt.Sprintf("%v", this.GetSession("RegMail"))
+		sessCode := fmt.Sprintf("%v", this.GetSession("RegCode"))
+		if sessEmail != email || sessCode != code {
+			this.ResponseJson(false, "邮箱验证码不正确，请重新输入或重新获取")
+		}
 	}
+
 	// 注册
 	err, uid := models.NewUser().Reg(
 		email,
@@ -349,11 +353,8 @@ func (this *UserController) Reg() {
 		this.GetString("repassword"),
 		this.GetString("intro"),
 	)
-	if err != nil || uid == 0 {
-		if err != nil {
-			helper.Logger.Error(err.Error())
-		}
-		this.ResponseJson(false, "注册失败")
+	if err != nil {
+		this.ResponseJson(false, err.Error())
 	}
 
 	models.Regulate(models.GetTableSys(), "CntUser", 1, "Id=1") //站点用户数量增加
@@ -393,7 +394,7 @@ func (this *UserController) SendMail() {
 		}
 
 		code := helper.RandStr(6, 0)
-		err := models.SendMail(email, fmt.Sprintf("%v会员注册验证码", this.Sys.Site), strings.Replace(this.Sys.TplEmailReg, "{code}", code, -1))
+		err := models.NewEmail().SendMail(email, fmt.Sprintf("%v会员注册验证码", this.Sys.Site), strings.Replace(this.Sys.TplEmailReg, "{code}", code, -1))
 		if err != nil {
 			helper.Logger.Error("邮件发送失败：%v", err.Error())
 			this.ResponseJson(false, "邮件发送失败，请联系管理员检查邮箱配置是否正确")
@@ -410,7 +411,7 @@ func (this *UserController) SendMail() {
 	}
 
 	code := helper.RandStr(6, 0)
-	err := models.SendMail(email, fmt.Sprintf("%v找回密码验证码", this.Sys.Site), strings.Replace(this.Sys.TplEmailFindPwd, "{code}", code, -1))
+	err := models.NewEmail().SendMail(email, fmt.Sprintf("%v找回密码验证码", this.Sys.Site), strings.Replace(this.Sys.TplEmailFindPwd, "{code}", code, -1))
 	if err != nil {
 		helper.Logger.Error("邮件发送失败：%v", err.Error())
 		this.ResponseJson(false, "邮件发送失败，请联系管理员检查邮箱配置是否正确")
@@ -441,7 +442,7 @@ func (this *UserController) Sign() {
 		log := models.CoinLog{
 			Uid:  this.IsLogin,
 			Coin: this.Sys.Sign,
-			Log:  fmt.Sprintf("于%v签到成功，增加 %v 个金币", time.Now().Format("2006-01-02 15:04:05"), this.Sys.Sign),
+			Log:  fmt.Sprintf("签到成功，获得 %v 个金币", this.Sys.Sign),
 		}
 		models.NewCoinLog().LogRecord(log)
 	}
@@ -474,15 +475,30 @@ func (this *UserController) CreateCollectFolder() {
 		ext := slice[len(slice)-1]
 		dir := fmt.Sprintf("./uploads/%v/%v/", time.Now().Format("2006-01-02"), this.IsLogin)
 		os.MkdirAll(dir, 0777)
-		file := helper.MyMD5(fmt.Sprintf("%v-%v-%v", timestamp, this.IsLogin, fh.Filename)) + "." + ext
-		err = this.SaveToFile("Cover", dir+file)
-		if err == nil {
-			//将图片移动到OSS
-			err = models.NewOss().MoveToOss(dir+file, file, true, true)
-			helper.Logger.Debug(dir + file)
-			if err != nil {
-				helper.Logger.Error(err.Error())
-			}
+		file := helper.MD5Crypt(fmt.Sprintf("%v-%v-%v", timestamp, this.IsLogin, fh.Filename)) + "." + ext
+
+		tmpFile := dir + file
+		err = this.SaveToFile("Cover", tmpFile)
+		if err != nil {
+			helper.Logger.Error(err.Error())
+			this.ResponseJson(false, "封面保存失败")
+		}
+		defer os.RemoveAll(tmpFile)
+
+		if err = helper.CropImage(tmpFile, helper.CoverWidth, helper.CoverHeight); err != nil {
+			helper.Logger.Error(err.Error())
+			this.ResponseJson(false, "封面裁剪失败")
+		}
+
+		//将图片移动到OSS
+		var cs *models.CloudStore
+		if cs, err = models.NewCloudStore(false); err != nil {
+			helper.Logger.Error(err.Error())
+			this.ResponseJson(false, "连接云存储失败")
+		}
+		if err = cs.Upload(tmpFile, file); err != nil {
+			helper.Logger.Error(err.Error())
+		} else {
 			cover = file
 		}
 	}
@@ -569,8 +585,8 @@ func (this *UserController) FindPwd() {
 	if fmt.Sprintf("%v", this.GetSession("FindPwdMail")) != params["email"].(string) || fmt.Sprintf("%v", this.GetSession("FindPwdCode")) != params["code"].(string) {
 		this.ResponseJson(false, "验证码不正确，修改密码失败")
 	}
-	pwd := helper.MyMD5(params["password"].(string))
-	repwd := helper.MyMD5(params["repassword"].(string))
+	pwd := helper.MD5Crypt(params["password"].(string))
+	repwd := helper.MD5Crypt(params["repassword"].(string))
 	if pwd != repwd {
 		this.ResponseJson(false, "确认密码和密码不一致")
 	}
@@ -602,9 +618,9 @@ func (this *UserController) DocDel() {
 		this.ResponseJson(false, "删除失败，文档不存在")
 	}
 
-	errs := models.NewDocumentRecycle().RemoveToRecycle(this.IsLogin, true, docid)
-	if len(errs) > 0 {
-		helper.Logger.Error("删除失败：%v", strings.Join(errs, "; "))
+	err := models.NewDocumentRecycle().RemoveToRecycle(this.IsLogin, true, docid)
+	if err != nil {
+		helper.Logger.Error("删除失败：%v", err.Error())
 		this.ResponseJson(false, "删除失败，文档不存在")
 	}
 
@@ -730,35 +746,46 @@ func (this *UserController) Avatar() {
 	}
 	defer f.Close()
 
-	slice := strings.Split(fh.Filename, ".")
-	ext := strings.ToLower(slice[len(slice)-1])
-
+	ext := strings.ToLower(strings.TrimLeft(filepath.Ext(fh.Filename), "."))
 	if !(ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "gif") {
 		this.ResponseJson(false, "头像图片格式只支持jpg、jpeg、png和gif")
 	}
-	tmpFile := dir + "/" + helper.MyMD5(fmt.Sprintf("%v-%v-%v", fh.Filename, this.IsLogin, time.Now().Unix())) + "." + ext
-	saveFile := helper.MyMD5(tmpFile) + "." + ext
+
+	tmpFile := dir + "/" + helper.MD5Crypt(fmt.Sprintf("%v-%v-%v", fh.Filename, this.IsLogin, time.Now().Unix())) + "." + ext
+	saveFile := helper.MD5Crypt(tmpFile) + "." + ext
 	err = this.SaveToFile("Avatar", tmpFile)
 	if err != nil {
 		helper.Logger.Error("用户(%v)头像保存失败：%v", this.IsLogin, err.Error())
 		this.ResponseJson(false, "头像文件保存失败")
 	}
-	err = models.NewOss().MoveToOss(tmpFile, saveFile, true, true)
+
+	//头像裁剪
+	if err = helper.CropImage(tmpFile, helper.AvatarWidth, helper.AvatarHeight); err != nil {
+		helper.Logger.Error("图片裁剪失败：%v", err.Error())
+	}
+
+	var cs *models.CloudStore
+	if cs, err = models.NewCloudStore(false); err != nil {
+		helper.Logger.Error(err.Error())
+		this.ResponseJson(false, "内部服务错误：云存储连接失败")
+	}
+
+	err = cs.Upload(tmpFile, saveFile)
 	if err != nil {
 		helper.Logger.Error(err.Error())
 		this.ResponseJson(false, "头像文件保存失败")
 	}
+	os.RemoveAll(tmpFile)
+
 	//查询数据库用户数据
 	var user = models.User{Id: this.IsLogin}
 	orm.NewOrm().Read(&user)
-	if len(user.Avatar) > 0 {
-		//删除原头像图片
-		go models.NewOss().DelFromOss(true, user.Avatar)
-	}
+	oldAvatar := user.Avatar
 	user.Avatar = saveFile
 	rows, err := orm.NewOrm().Update(&user, "Avatar")
 	if rows > 0 && err == nil {
 		this.ResponseJson(true, "头像更新成功")
+		go cs.Delete(oldAvatar)
 	}
 	if err != nil {
 		helper.Logger.Error(err.Error())
@@ -789,9 +816,9 @@ func (this *UserController) Edit() {
 		if len(params["NewPassword"].(string)) < 6 || len(params["RePassword"].(string)) < 6 {
 			this.ResponseJson(false, "密码长度必须至少6个字符")
 		}
-		opwd := helper.MyMD5(params["OldPassword"].(string))
-		npwd := helper.MyMD5(params["NewPassword"].(string))
-		rpwd := helper.MyMD5(params["RePassword"].(string))
+		opwd := helper.MD5Crypt(params["OldPassword"].(string))
+		npwd := helper.MD5Crypt(params["NewPassword"].(string))
+		rpwd := helper.MD5Crypt(params["RePassword"].(string))
 		if user.Password != opwd {
 			this.ResponseJson(false, "原密码不正确")
 		}

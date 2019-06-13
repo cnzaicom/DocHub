@@ -1,9 +1,8 @@
 package AdminControllers
 
 import (
+	"net/http"
 	"strings"
-
-	"fmt"
 
 	"io/ioutil"
 	"time"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/TruthHun/DocHub/helper"
 	"github.com/TruthHun/DocHub/models"
-	"github.com/aliyun/aliyun-oss-go-sdk/oss"
 	"github.com/astaxie/beego/orm"
 )
 
@@ -30,49 +28,82 @@ type logFile struct {
 
 //系统配置管理
 func (this *SysController) Get() {
-	tab := models.ConfigCate(strings.ToLower(this.GetString("tab")))
+	tab := helper.ConfigCate(strings.ToLower(this.GetString("tab")))
+	var err error
 	switch tab {
-	case models.CONFIG_EMAIL, models.CONFIG_OSS, models.CONFIG_DEPEND, models.CONFIG_ELASTICSEARCH, models.CONFIG_LOGS:
+	case models.ConfigCateEmail, models.ConfigCateDepend, models.ConfigCateElasticSearch, models.ConfigCateLog:
 	default:
 		tab = "default"
 	}
-	if this.Ctx.Request.Method == "POST" {
+	if this.Ctx.Request.Method == http.MethodPost {
+		defer func() {
+			models.NewSys().UpdateGlobalConfig()
+			models.NewConfig().UpdateGlobalConfig()
+		}()
 		if tab == "default" {
 			var sys models.Sys
 			this.ParseForm(&sys)
-			if i, err := orm.NewOrm().Update(&sys); i > 0 && err == nil {
-				models.NewSys().UpdateGlobal() //更新全局变量
-			} else {
-				if err != nil {
-					helper.Logger.Error(err.Error())
-				}
-				this.ResponseJson(false, "更新失败，可能您未对内容做更改")
+			_, err := orm.NewOrm().Update(&sys)
+			if err != nil {
+				helper.Logger.Error(err.Error())
+				this.ResponseJson(false, err.Error())
 			}
-		} else {
-			modelCfg := new(models.Config)
-			for k, v := range this.Ctx.Request.Form {
-				modelCfg.UpdateByKey(models.ConfigCate(tab), k, v[0])
-			}
-			//最后更新全局配置
-			modelCfg.UpdateGlobal()
-			if tab == models.CONFIG_ELASTICSEARCH {
-				if err := models.NewElasticSearchClient().Init(); err != nil {
-					this.ResponseJson(false, "ElasticSearch初始化失败："+err.Error())
-				}
-			}
-
+			this.ResponseJson(true, "更新成功")
 		}
+
+		var cfg interface{}
+		cfg, err = models.NewConfig().ParseForm(tab, this.Ctx.Request.Form)
+		if cfg != nil {
+			switch tab {
+			case models.ConfigCateEmail:
+				if err != nil {
+					this.ResponseJson(false, err.Error())
+				}
+				modelEmail := cfg.(*models.ConfigEmail)
+				err = modelEmail.SendMail(modelEmail.TestUserEmail, "测试邮件", "这是一封测试邮件，用于检测是否能正常发送邮件")
+			case models.ConfigCateElasticSearch:
+				modelES := cfg.(*models.ElasticSearchClient)
+				if modelES.On {
+					modelES.Host = strings.TrimRight(modelES.Host, "/") + "/"
+					modelES.Type = "fulltext"
+					modelES.Timeout = 5 * time.Second
+					err = modelES.Init()
+				}
+			}
+		}
+		if err != nil {
+			this.ResponseJson(false, err.Error(), cfg)
+		}
+
+		o := orm.NewOrm()
+		o.Begin()
+		defer func() {
+			if err != nil {
+				o.Rollback()
+			} else {
+				o.Commit()
+			}
+		}()
+
+		for k, v := range this.Ctx.Request.Form {
+			if _, err = o.QueryTable(models.GetTableConfig()).Filter("Category", tab).Filter("Key", k).Update(orm.Params{"Value": v[0]}); err != nil {
+				helper.Logger.Error(err.Error())
+				this.ResponseJson(false, "ElasticSearch初始化失败："+err.Error())
+			}
+		}
+
 		this.ResponseJson(true, "更新成功")
 	}
 
 	this.Data["Tab"] = tab
 	this.Data["Title"] = "系统管理"
 	this.Data["IsSys"] = true
+	this.Data["Store"] = this.GetString("store", string(models.StoreOss))
 	if tab == "default" {
 		this.Data["Sys"], _ = models.NewSys().Get()
 	} else {
-		this.Data["Configs"] = new(models.Config).All()
-		if tab == models.CONFIG_ELASTICSEARCH {
+		this.Data["Configs"] = models.NewConfig().All()
+		if tab == models.ConfigCateElasticSearch {
 			count, errES := models.NewElasticSearchClient().Count()
 			this.Data["Count"] = count
 			if errES != nil {
@@ -159,39 +190,55 @@ func (this *SysController) RebuildAllIndex() {
 
 //测试邮箱是否能发件成功
 func (this *SysController) TestForSendingEmail() {
-	//邮件接收人
-	to := helper.GetConfig(string(models.CONFIG_EMAIL), "test")
-	if err := models.SendMail(to, "测试邮件", "这是一封测试邮件，用于检测是否能正常发送邮件"); err != nil {
+	to := helper.GetConfig(models.ConfigCateEmail, "test")
+	if err := models.NewEmail().SendMail(to, "测试邮件", "这是一封测试邮件，用于检测是否能正常发送邮件"); err != nil {
 		this.Response(map[string]interface{}{"status": 0, "msg": "邮件发送失败：" + err.Error()})
 	}
 	this.Response(map[string]interface{}{"status": 1, "msg": "邮件发送成功"})
 }
 
-//测试OSS是否连通成功
-func (this *SysController) TestOSS() {
-	var (
-		testFile        = "dochub-test.txt"
-		content         = strings.NewReader("this is test content")
-		public, private *oss.Bucket
-		err             error
-	)
+// 云存储配置
+func (this *SysController) CloudStore() {
+	tab := this.GetString("tab", models.GlobalSys.StoreType)
+	modelConfig := models.NewConfig()
+	this.Data["Config"] = modelConfig.GetByCate(helper.ConfigCate(tab))
+	this.Data["Tab"] = tab
+	this.Data["IsCloudStore"] = true
+	this.TplName = "cloud-store.html"
+}
 
-	if public, err = models.NewOss().NewBucket(true); err == nil {
-		err = public.PutObject(testFile, content)
+func (this *SysController) SetCloudStore() {
+	storeType := helper.ConfigCate(this.GetString("tab", "cs-oss"))
+	if storeType == "" {
+		this.ResponseJson(false, "参数错误：存储类别不正确")
 	}
+	modelConfig := models.NewConfig()
+	config, err := modelConfig.ParseForm(storeType, this.Ctx.Request.Form)
 	if err != nil {
-		this.Response(map[string]interface{}{"status": 0, "msg": fmt.Sprintf("Bucket(%v)连通失败：%v", public.BucketName, err.Error())})
+		this.ResponseJson(false, err.Error(), config)
 	}
-	public.DeleteObject(testFile)
 
-	if private, err = models.NewOss().NewBucket(false); err == nil {
-		err = private.PutObject(testFile, content)
-	}
+	csPublic, err := models.NewCloudStoreWithConfig(config, storeType, false)
 	if err != nil {
-		this.Response(map[string]interface{}{"status": 0, "msg": fmt.Sprintf("Bucket(%v)连通失败：%v", private.BucketName, err.Error())})
+		this.ResponseJson(false, err.Error(), config)
 	}
 
-	private.DeleteObject(testFile)
+	if err = csPublic.PingTest(); err != nil {
+		this.ResponseJson(false, err.Error(), config)
+	}
 
-	this.Response(map[string]interface{}{"status": 1, "msg": "OSS连通成功"})
+	csPrivate, err := models.NewCloudStoreWithConfig(config, storeType, true)
+	if err != nil {
+		this.ResponseJson(false, err.Error(), config)
+	}
+
+	if err = csPrivate.PingTest(); err != nil {
+		this.ResponseJson(false, err.Error(), config)
+	}
+
+	err = modelConfig.UpdateCloudStore(storeType, config)
+	if err != nil {
+		this.ResponseJson(false, err.Error(), config)
+	}
+	this.ResponseJson(true, "更新成功", config)
 }

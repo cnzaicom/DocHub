@@ -41,6 +41,8 @@
                             <tr>
                                 <td>
                                     <a href="/view/{{.Id}}" class="wenku-width-400px wenku-ellipsis" target="_blank"><img src="/static/Home/default/img/{{.ExtCate}}_24.png"> {{.Title}}</a>
+                                    <br>
+                                    <div class="help-block">MD5:  {{if .Md5}}{{.Md5}}{{else}}-{{end}}</div>
                                 </td>
                                 <td>
                                     {{if eq (.Self|Interface2Int) 1}}
@@ -50,10 +52,14 @@
                                     {{end}}
                                 </td>
                                 <td>
-                                    {{if (.Md5|IsIllegal)}}
-                                    <span class="text-danger">非法(禁传)</span>
+                                    {{if .Md5}}
+                                        {{if and .Md5 (.Md5|IsIllegal)}}
+                                        <span class="text-danger">非法(禁传)</span>
+                                        {{else}}
+                                        <span class="text-success">合法</span>
+                                        {{end}}
                                     {{else}}
-                                    <span class="text-success">合法</span>
+                                    --
                                     {{end}}
                                 </td>
                                 <td>

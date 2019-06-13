@@ -12,6 +12,7 @@ type Category struct {
 	Id     int    `orm:"column(Id)"`
 	Pid    int    `orm:"default(0);column(Pid)"`           //父类ID【Pid为0时的id为频道Id(chanel_id)】
 	Title  string `orm:"size(20);column(Title);default()"` //分类名称
+	Cover  string `orm:"column(Cover);default()"`          //封面
 	Cnt    int    `orm:"default(0);column(Cnt)"`           //当前分类下的文档数量统计
 	Sort   int    `orm:"default(0);column(Sort)"`          //分类排序，值越小越靠前
 	Alias  string `orm:"size(30);default();column(Alias)"` //英文别名
@@ -67,5 +68,38 @@ func (this *Category) GetSameLevelCategoryById(id interface{}) (cates []Category
 	o := orm.NewOrm()
 	o.Read(&cate)
 	o.QueryTable(GetTableCategory()).Filter("Pid", cate.Pid).All(&cates)
+	return
+}
+
+// 根据父级id获取分类
+func (this *Category) GetByPid(pid int, status ...bool) (categories []Category) {
+	q := orm.NewOrm().QueryTable(this).Filter("Pid", pid).OrderBy("Sort")
+	if len(status) > 0 {
+		q = q.Filter("Status", status[0])
+	}
+	q.All(&categories)
+	return
+}
+
+// get all categories
+func (this *Category) GetAll(status ...bool) (count int64, categories []Category) {
+	q := orm.NewOrm().QueryTable(this)
+	if len(status) > 0 {
+		q = q.Filter("status", status[0])
+	}
+	count, _ = q.OrderBy("sort").All(&categories)
+	return
+}
+
+func (this *Category) GetCategoriesById(id ...interface{}) (cates []Category, err error) {
+	if len(id) == 0 {
+		return
+	}
+
+	_, err = orm.NewOrm().QueryTable(this).Filter("Id__in", id...).All(&cates)
+	if err != nil {
+		helper.Logger.Error(err.Error())
+	}
+
 	return
 }

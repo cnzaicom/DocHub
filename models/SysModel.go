@@ -32,7 +32,6 @@ type Sys struct {
 	DomainMobile      string `orm:"size(100);default(m.dochub.me);column(DomainMobile)"` //移动端域名
 	PreviewPage       int    `orm:"default(50);column(PreviewPage)"`                     //文档共预览的最大页数，0表示不限制
 	Trends            string `orm:"default();column(Trends)"`                            //文库动态，填写文档的id
-	HomeCates         string `orm:"default();column(HomeCates);size(50)"`                //首页分类，填写频道ids
 	FreeDay           int    `orm:"default(7);column(FreeDay)"`                          //文档免费下载时长。即上次下载扣除金币后多长时间后下载需要收费。时间单位为天
 	Question          string `orm:"default(DocHub文库的中文名是？);column(Question)"`            //评论问答问题
 	Answer            string `orm:"default(多哈);column(Answer)"`                          //评论问答的问题
@@ -40,7 +39,8 @@ type Sys struct {
 	Watermark         string `orm:"column(Watermark);default()"`                         //水印文案
 	ReportReasons     string `orm:"column(ReportReasons);default();size(2048)"`          //举报原因
 	IsCloseReg        bool   `orm:"default(false);column(IsCloseReg)"`                   //是否关闭注册
-	//Price             int    `orm:"default(1);column(Price)"`                            //会员下载一篇文档需要的最大金币【会员在上传分享文档时允许设置的最大金币上限】
+	StoreType         string `orm:"default(cs-oss);column(StoreType);size(15)"`          //文档存储方式
+	CheckRegEmail     bool   `orm:"default(true);column(CheckRegEmail);"`                //是否需要验证注册邮箱，如果需要验证注册邮箱，提要求发送注册验证码
 }
 
 func NewSys() *Sys {
@@ -63,7 +63,7 @@ func (this *Sys) Get() (sys Sys, err error) {
 //更新系统全局变量
 //@return           sys         返回的系统信息
 //@return           err         错误
-func (this *Sys) UpdateGlobal() {
+func (this *Sys) UpdateGlobalConfig() {
 	GlobalSys, _ = this.Get()
 }
 

@@ -332,8 +332,9 @@ $(function(){
             clearTimeout(timeout);//避免短时间内重复计算
             timeout=setTimeout(function () {
                 WenkuLazyLoad();
-            },100);
+            },30);
         });
+
         $(window).on("resize",function () {
             WenkuLazyLoad();
         });
@@ -706,12 +707,18 @@ $(function(){
         });
 		
 		//编辑收藏夹
-		$("#ModalFolderEditBtn").click(function () {
-			var obj=$(this).parents(".wenku-title"),title=obj.find("h6").text(),desc=obj.find(".help-block").text(),id=$(this).attr("data-id"),form=$("#ModalFolderEdit form");
+		$(".ModalFolderEditBtn").click(function () {
+			var obj=$(this).parents(".wenku-title"),
+                title=obj.find("h6").text(),
+                desc=obj.find(".help-block").text(),
+                id=$(this).attr("data-id"),
+                form=$("#ModalFolderEdit form");
 			form.find("[name=Id]").val(id),form.find("[name=Title]").val(title),form.find("[name=Description]").val(desc);
 			$("#ModalFolderEdit").modal("show");
         });
-		
+
+		console.log($("#wenku-user .wenku-right").height());
+        $("#wenku-user .wenku-left .panel-body").css({"min-height":$("#wenku-user .wenku-right").height()-105});
 
 	}
 
@@ -802,8 +809,8 @@ $(function(){
             _url=location.href;
         }
         if (l>0) return false;
+        _this.addClass("disabled");
         if (method=="post") {
-
             if (form.attr("enctype")=="multipart/form-data"){
                 form.attr("target","notarget");
                 form.submit();
@@ -813,17 +820,17 @@ $(function(){
                         wenku_alert("success",rt.msg,2000,_url);
                     } else{
                         wenku_alert("error",rt.msg,3000,"");
+                        _this.removeClass("disabled");
                     }
                 });
-                _this.removeClass("disabled");
             }
-
         } else{
             $.get(action,data,function(rt){
                 if (rt.status==1) {
                     wenku_alert("success",rt.msg,2000,_url);
                 } else{
                     wenku_alert("error",rt.msg,3000,"");
+                    _this.removeClass("disabled");
                 }
             });
         }

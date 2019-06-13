@@ -3,8 +3,7 @@ package models
 
 import (
 	"fmt"
-
-	"gopkg.in/gomail.v2"
+	"net/url"
 
 	"github.com/TruthHun/DocHub/helper"
 
@@ -19,12 +18,9 @@ import (
 
 	"os"
 
-	"os/exec"
 	"strconv"
 
 	"time"
-
-	"crypto/tls"
 
 	"database/sql"
 
@@ -35,9 +31,7 @@ import (
 
 //以下是数据库全局数据变量
 var (
-	GlobalSys               Sys          //全局系统设置
-	GlobalGitbookPublishing bool = false //是否正在发布gitbook书籍，如果是，则不能再点击发布
-	GlobalGitbookNextAbled  bool = true  //是否可以继续采集和发布下一本数据，如果true，则表示可以继续下载和发布下一本电子书，否则执行等待操作
+	GlobalSys Sys //全局系统设置
 )
 
 //以下是表字段查询
@@ -65,7 +59,6 @@ func Init() {
 		orm.Debug = true
 		orm.RunSyncdb("default", false, true)
 	}
-
 	//安装初始数据
 	install()
 }
@@ -88,8 +81,6 @@ func RegisterDB() {
 		NewRelate(),
 		NewCollectFolder(),
 		NewCollect(),
-		NewAdPosition(),
-		NewAd(),
 		NewFriend(),
 		NewSys(),
 		NewWord(),
@@ -104,6 +95,8 @@ func RegisterDB() {
 		NewSearchLog(),
 		NewDocText(),
 		NewConfig(),
+		//NewAdPosition(),
+		//NewAd(),
 	}
 	orm.RegisterModelWithPrefix(beego.AppConfig.DefaultString("db::prefix", "hc_"), models...)
 	dbUser := beego.AppConfig.String("db::user")
@@ -124,16 +117,16 @@ func RegisterDB() {
 	if envport := os.Getenv("MYSQL_PORT"); envport != "" {
 		dbPort = envport
 	}
-	dblink := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=%s&loc=%v", dbUser, dbPassword, dbHost, dbPort, dbDatabase, dbCharset, "Asia%2FShanghai")
-	//下面两个参数后面要放到app.conf提供用户配置使用
-	// (可选)设置最大空闲连接
+	loc := "Local"
+	if timezone := beego.AppConfig.String("db::timezone"); timezone != "" {
+		loc = url.QueryEscape(timezone)
+	}
+	dbLink := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=%s&loc=%v", dbUser, dbPassword, dbHost, dbPort, dbDatabase, dbCharset, loc)
 	maxIdle := beego.AppConfig.DefaultInt("db::maxIdle", 50)
-	// (可选) 设置最大数据库连接 (go >= 1.2)
 	maxConn := beego.AppConfig.DefaultInt("db::maxConn", 300)
-	if err := orm.RegisterDataBase("default", "mysql", dblink, maxIdle, maxConn); err != nil {
+	if err := orm.RegisterDataBase("default", "mysql", dbLink, maxIdle, maxConn); err != nil {
 		panic(err)
 	}
-
 }
 
 //获取带表前缀的数据表
@@ -193,6 +186,9 @@ func Regulate(table, field string, step int, condition string, conditionArgs ...
 		mark = "-"
 	}
 	sql := fmt.Sprintf("update %v set %v=%v%v? where %v", getTable(table), field, field, mark, condition)
+	if step < 0 {
+		sql = fmt.Sprintf("update %v set %v=%v%v? where %v and %v>0", getTable(table), field, field, mark, condition, field)
+	}
 	if len(conditionArgs) > 0 {
 		_, err = orm.NewOrm().Raw(sql, step, conditionArgs[0:]).Exec()
 	} else {
@@ -473,103 +469,6 @@ func joinOn(table string, usedTables []string, on []map[string]string) (newon []
 	return
 }
 
-//将PDF文件转成svg，并把文件更新到oss上【注意：svg存放的文件夹是xmd5对MD5字符串加密后的文件夹】
-//@param            file            pdf文件
-//@param            totalPage       pdf文件页数
-//@return           files           生成的pdf文件
-//@return           err             错误
-func Pdf2Svg(file string, totalPage int, md5str string) (err error) {
-	var (
-		width   int
-		height  int
-		content string
-	)
-
-	//文件夹
-	folder := strings.TrimSuffix(strings.ToLower(file), ".pdf")
-	folder = strings.TrimSuffix(folder, "/")
-	//os.MkdirAll(folder, 0777)//注意：这里不要创建文件夹！！
-	//如果文件夹folder已经存在了，则需要先删除
-	os.MkdirAll(folder, os.ModePerm)
-	defer os.RemoveAll(folder)
-
-	pdf2svg := helper.GetConfig("depend", "pdf2svg", "pdf2svg")
-
-	//compress := beego.AppConfig.DefaultBool("compressSvg", false) //是否压缩svg
-	compress := true                            //强制为true
-	content = helper.ExtractPdfText(file, 1, 5) //提取前5页的PDF文本内容
-	watermarkText := NewSys().GetByField("Watermark").Watermark
-	//处理pdf转svg
-	for i := 0; i < totalPage; i++ {
-		num := i + 1
-		svgfile := fmt.Sprintf("%v/%v.svg", folder, num)
-		//Usage: pdf2svg <in file.pdf> <out file.svg> [<page no>]
-		cmd := exec.Command(pdf2svg, file, svgfile, strconv.Itoa(num))
-		if helper.Debug {
-			beego.Debug("pdf转svg参数", cmd.Args)
-		}
-		if err := cmd.Run(); err != nil {
-			helper.Logger.Error(err.Error())
-			helper.Logger.Error(strings.Join(cmd.Args, " "))
-		} else {
-			if num == 1 {
-				//封面处理
-				if cover, err := helper.ConvertToJpeg(svgfile, false); err == nil {
-					NewOss().MoveToOss(cover, md5str+".jpg", true, true)
-				}
-				//获取svg的宽高(pt)
-				width, height = helper.ParseSvgWidthAndHeight(svgfile)
-				if _, err := UpdateByField(GetTableDocumentStore(), map[string]interface{}{"Width": width, "Height": height}, "Md5", md5str); err != nil {
-					helper.Logger.Error(err.Error())
-				}
-			}
-			//添加文字水印
-			helper.SvgTextWatermark(svgfile, watermarkText, width/6, height/4)
-
-			//压缩svg内容
-			helper.CompressSvg(svgfile)
-			NewOss().MoveToOss(svgfile, md5str+"/"+strconv.Itoa(num)+".svg", true, true, compress)
-		}
-	}
-
-	//将内容更新到数据库
-	if len(content) > 5000 {
-		content = helper.SubStr(content, 0, 4800)
-	}
-	var docText = DocText{Md5: md5str, Content: content}
-	if _, _, err := orm.NewOrm().ReadOrCreate(&docText, "Md5"); err != nil {
-		helper.Logger.Error(err.Error())
-	}
-
-	//扫尾工作，如果还存在文件，则继续将文件移到oss
-	filenum := 1 //假设有一个svg或者jpg文件
-	for {
-		files := helper.ScanDir(folder)
-		if filenum > 0 {
-			//将l重置为0
-			filenum = 0
-			for _, file := range files {
-				//svg结尾
-				if strings.HasSuffix(file, ".svg") { //svg结尾的，都是文档页
-					slice := strings.Split(file, "/")
-					NewOss().MoveToOss(file, fmt.Sprintf("%v/%v", md5str, slice[len(slice)-1]), true, true, compress)
-					filenum++ //
-				} else if strings.HasSuffix(file, ".jpg") { //jpg结尾的，基本都是封面图片
-					NewOss().MoveToOss(file, md5str+".jpg", true, true)
-					filenum++
-				}
-			}
-		} else {
-			break
-		}
-	}
-	//删除文件夹
-	if filenum == 0 {
-		go os.RemoveAll(folder)
-	}
-	return
-}
-
 //替换写入【注意：表中必须要有一个除了主键外的唯一键】
 //@param            table           需要写入的table
 //@param            params          需要写入的数据
@@ -601,60 +500,6 @@ func ReplaceInto(table string, params map[string]interface{}) (err error) {
 //@return           cnt             统计的记录数
 func Count(table string, cond *orm.Condition) (cnt int64) {
 	cnt, _ = orm.NewOrm().QueryTable(getTable(table)).SetCond(cond).Count()
-	return
-}
-
-//发送邮件
-//@param            to          string          收件人
-//@param            subject     string          邮件主题
-//@param            content     string          邮件内容
-//@return           error                       发送错误
-//func SendMail(to, subject, content string) error {
-//	port := beego.AppConfig.DefaultInt("email::port", 80)
-//	host := beego.AppConfig.String("email::host")
-//	username := beego.AppConfig.String("email::username")
-//	password := beego.AppConfig.String("email::password")
-//	msg := &mail.Message{
-//		mail.Header{
-//			"From":         {username},
-//			"To":           {to},
-//			"Reply-To":     {beego.AppConfig.DefaultString("mail::replyto", username)},
-//			"Subject":      {subject},
-//			"Content-Type": {"text/html"},
-//		},
-//		strings.NewReader(content),
-//	}
-//	m := mailer.NewMailer(host, username, password, port)
-//	err := m.Send(msg)
-//	return err
-//}
-
-//发送邮件
-//@param            to          string          收件人
-//@param            subject     string          邮件主题
-//@param            content     string          邮件内容
-//@return           error                       发送错误
-func SendMail(to, subject, content string) (err error) {
-	port := int(helper.GetConfigInt64("email", "port"))
-	host := helper.GetConfig("email", "host")
-	username := helper.GetConfig("email", "username")
-	password := helper.GetConfig("email", "password")
-	replyto := helper.GetConfig("email", "replyto")
-	m := gomail.NewMessage()
-	m.SetHeader("From", username)
-	m.SetHeader("To", to)
-	if strings.TrimSpace(replyto) != "" {
-		m.SetHeader("Reply-To", replyto)
-	}
-	m.SetHeader("Subject", subject)
-	m.SetBody("text/html", content)
-
-	d := gomail.NewDialer(host, port, username, password)
-	d.TLSConfig = &tls.Config{InsecureSkipVerify: true}
-
-	// Send the email to Bob, Cora and Dan.
-	err = d.DialAndSend(m)
-
 	return
 }
 
@@ -697,10 +542,9 @@ func CheckDatabaseIsExist(host string, port int, username, password, database st
 		}
 		timeout <- false
 	}()
-	go func() {
-		time.Sleep(3 * time.Second)
+	time.AfterFunc(3*time.Second, func() {
 		timeout <- true
-	}()
+	})
 
 	if t := <-timeout; t {
 		err = errors.New("MySQL数据库连接失败，请检查数据库链接是否正确")

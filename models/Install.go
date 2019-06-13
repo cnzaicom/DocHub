@@ -1,6 +1,7 @@
 package models
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/TruthHun/DocHub/helper"
@@ -9,7 +10,6 @@ import (
 )
 
 func install() {
-	//数据初始化，如果数据已经存在，则不会继续写入(因为数据已存在，继续写入会报错，所以没影响)
 	installAdmin()
 	installCategory()
 	installFriendlinks()
@@ -17,8 +17,8 @@ func install() {
 	installSeo()
 	installSys()
 	installCfg()
-
-	NewSys().UpdateGlobal() //更新系统配置的全局变量
+	NewSys().UpdateGlobalConfig()
+	NewConfig().UpdateGlobalConfig()
 }
 
 //安装管理员初始数据
@@ -26,7 +26,7 @@ func installAdmin() {
 	var admin = Admin{
 		Id:       1,
 		Username: "admin",
-		Password: helper.MyMD5("admin"),
+		Password: helper.MD5Crypt("admin"),
 		Email:    "TruthHun@QQ.COM",
 		Code:     "芝麻开门",
 	}
@@ -54,7 +54,6 @@ func installSys() {
 			<p>您好，非常感谢您对DocHub文库(<a href="https://github.com/TruthHun/DocHub" target="_blank" title="DocHub文库">DocHub</a>)的关注和热爱</p>
 			<p>您本次申请找回密码的邮箱验证码是: <strong style="font-size: 30px;color: red;">{code}</strong></p>
 			<p>如果非您本人操作，请忽略该邮件。</p>`,
-		HomeCates:         "5,2,1,3,4",
 		Trends:            "1,2,3,4,5",
 		Site:              "DocHub(多哈)文库",
 		Reward:            5,
@@ -73,7 +72,9 @@ func installSys() {
 4:敏感信息
 5:人身攻击
 6:骚扰他人`, //举报原因
-		Watermark: "DocHub", //文档水印
+		Watermark:     "DocHub", //文档水印
+		StoreType:     string(StoreOss),
+		CheckRegEmail: true,
 	}
 	orm.NewOrm().ReadOrCreate(&sys, "Id")
 }
@@ -292,6 +293,17 @@ func installCategory() {
 	//存在分类了，则表明已经初始化过数据
 	var cate = new(Category)
 	o := orm.NewOrm()
+	defer func() {
+		var cates []Category
+		o.QueryTable(GetTableCategory()).Filter("Pid__in", 0).All(&cates)
+		for _, item := range cates {
+			if item.Cover == "" {
+				item.Cover = fmt.Sprintf("/static/Home/default/img/cover-%v.png", item.Alias)
+				o.Update(&item)
+			}
+		}
+	}()
+
 	if o.QueryTable(cate).Filter("id__gt", 0).One(cate); cate.Id > 0 {
 		return
 	}
@@ -629,6 +641,7 @@ func installCategory() {
 		(334, 10, '高考', 0, 0, '', 1);
 `
 	o.Raw(sql).Exec()
+
 }
 
 //初始化配置项
@@ -636,7 +649,7 @@ func installCfg() {
 	var configs []Config
 
 	//邮箱
-	cateEmail := string(CONFIG_EMAIL)
+	cateEmail := string(ConfigCateEmail)
 	cfgEmail := []Config{
 		Config{
 			Title:       "主机",
@@ -682,92 +695,15 @@ func installCfg() {
 		},
 	}
 
-	//oss
-	cateOss := string(CONFIG_OSS)
-	cfgOss := []Config{
-		Config{
-			Title:       "AccessKeyId",
-			Description: "",
-			Key:         "access_key_id",
-			Value:       "",
-			Category:    cateOss,
-		},
-		Config{
-			Title:       "AccessKeySecret",
-			Description: "",
-			Key:         "access_key_secret",
-			Value:       "",
-			Category:    cateOss,
-		},
-		Config{
-			Title:       "是否内网",
-			Description: "当前环境是否内网，内网则使用内网endpoint，否则使用外网endpoint",
-			Key:         "is_internal",
-			Value:       "false",
-			Category:    cateOss,
-			InputType:   INPUT_BOOL,
-		},
-		Config{
-			Title:       "内网Endpoint",
-			Description: "",
-			Key:         "endpoint_internal",
-			Value:       "",
-			Category:    cateOss,
-		},
-		Config{
-			Title:       "外网Endpoint",
-			Description: "",
-			Key:         "endpoint_outer",
-			Value:       "",
-			Category:    cateOss,
-		},
-		Config{
-			Title:       "公共读Bucket",
-			Description: "提供图片和文档预览，如：dochub-public",
-			Key:         "bucket_preview",
-			Value:       "",
-			Category:    cateOss,
-		},
-		Config{
-			Title:       "私有Bucket",
-			Description: "存储文档，无法直接访问，如：dochub-private",
-			Key:         "bucket_store",
-			Value:       "",
-			Category:    cateOss,
-		},
-		Config{
-			Title:       "预览链接",
-			Description: "如：https://dochub-public.oss-cn-hongkong.aliyuncs.com",
-			Key:         "preview_url",
-			Value:       "",
-			Category:    cateOss,
-		},
-		Config{
-			Title:       "下载链接",
-			Description: "如：https://dochub-private.oss-cn-hongkong.aliyuncs.com",
-			Key:         "download_url",
-			Value:       "",
-			Category:    cateOss,
-		},
-		Config{
-			Title:       "下载链接过期时长(秒)",
-			Description: "",
-			Key:         "url_expire",
-			Value:       "600",
-			InputType:   INPUT_NUMBER,
-			Category:    cateOss,
-		},
-	}
-
 	//日志
-	cateLogs := string(CONFIG_LOGS)
+	cateLogs := string(ConfigCateLog)
 	cfgLogs := []Config{
 		Config{
 			Title:       "保留时长(天)",
 			Description: "日志保留时长，至少一天",
 			Key:         "max_days",
 			Value:       "7",
-			InputType:   INPUT_NUMBER,
+			InputType:   InputNumber,
 			Category:    cateLogs,
 		},
 		Config{
@@ -780,7 +716,7 @@ func installCfg() {
 	}
 
 	//依赖
-	cateDepend := string(CONFIG_DEPEND)
+	cateDepend := string(ConfigCateDepend)
 	cfgDepend := []Config{
 		Config{
 			Title:       "PDF2SVG",
@@ -801,7 +737,7 @@ func installCfg() {
 			Description: "转换office文档的超时时间，避免转化失败还占用服务器资源，默认1800秒",
 			Key:         "soffice-expire",
 			Value:       "1800",
-			InputType:   INPUT_NUMBER,
+			InputType:   InputNumber,
 			Category:    cateDepend,
 		},
 		Config{
@@ -827,30 +763,30 @@ func installCfg() {
 		},
 		Config{
 			Title:       "SVGO",
-			Description: "svg内容压缩工具，清除多余字符",
+			Description: "node模块，svg压缩工具，清除svg多余字符",
 			Key:         "svgo",
 			Value:       "svgo",
 			Category:    cateDepend,
 		},
-		Config{
-			Title:       "启用SVGO",
-			Description: "是否启用svgo，默认为false",
-			Key:         "svgo-on",
-			Value:       "false",
-			InputType:   INPUT_BOOL,
-			Category:    cateDepend,
-		},
+		//Config{
+		//	Title:       "启用SVGO",
+		//	Description: "是否启用svgo，默认为false",
+		//	Key:         "svgo-on",
+		//	Value:       "false",
+		//	InputType:   InputBool,
+		//	Category:    cateDepend,
+		//},
 	}
 
 	//全文搜索
-	cateES := string(CONFIG_ELASTICSEARCH)
+	cateES := string(ConfigCateElasticSearch)
 	cfgES := []Config{
 		Config{
 			Title:       "是否开启",
 			Description: "是否开启ElasticSearch作为全文搜索引擎",
 			Key:         "on",
 			Value:       "false",
-			InputType:   INPUT_BOOL,
+			InputType:   InputBool,
 			Category:    cateES,
 		},
 		Config{
@@ -869,17 +805,516 @@ func installCfg() {
 		},
 	}
 
+	// 阿里云
+	cateOss := string(StoreOss)
+	cfgOss := []Config{
+		Config{
+			Title:       "AccessKey",
+			Description: "阿里云 AccessKey",
+			Key:         "access-key",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateOss,
+		},
+		Config{
+			Title:       "SecretKey",
+			Description: "阿里云 SecretKey",
+			Key:         "secret-key",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateOss,
+		},
+		Config{
+			Title:       "Endpoint",
+			Description: "阿里云 OSS endpoint，如果与服务器同属于同一内网，建议填内网 endpoint",
+			Key:         "endpoint",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateOss,
+		},
+		Config{
+			Title:       "公共读Bucket",
+			Description: "阿里云 OSS 具有公共读权限的 Bucket",
+			Key:         "public-bucket",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateOss,
+		},
+		Config{
+			Title:       "公共读Bucket域名",
+			Description: "阿里云 OSS 具有公共读权限的 Bucket 所绑定的域名，带 http:// 或者 https://",
+			Key:         "public-bucket-domain",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateOss,
+		},
+
+		Config{
+			Title:       "私有Bucket",
+			Description: "阿里云 OSS 创建的私有 Bucket",
+			Key:         "private-bucket",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateOss,
+		},
+		Config{
+			Title:       "私有Bucket域名",
+			Description: "阿里云 OSS 创建的私有 Bucket 所绑定的域名，带 http:// 或者 https://",
+			Key:         "private-bucket-domain",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateOss,
+		},
+		Config{
+			Title:       "过期时间",
+			Description: "文档下载签名链接有效时长(秒)",
+			Key:         "expire",
+			Value:       "3600",
+			InputType:   InputNumber,
+			Category:    cateOss,
+		},
+	}
+
+	// 百度云
+	cateBos := string(StoreBos)
+	cfgBos := []Config{
+		Config{
+			Title:       "AccessKey",
+			Description: "百度云 AccessKey",
+			Key:         "access-key",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateBos,
+		},
+		Config{
+			Title:       "SecretKey",
+			Description: "百度云 SecretKey",
+			Key:         "secret-key",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateBos,
+		},
+		Config{
+			Title:       "Endpoint",
+			Description: "百度云 BOS endpoint",
+			Key:         "endpoint",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateBos,
+		},
+		Config{
+			Title:       "公共读Bucket",
+			Description: "百度云 BOS 具有公共读权限的 Bucket",
+			Key:         "public-bucket",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateBos,
+		},
+		Config{
+			Title:       "公共读Bucket域名",
+			Description: "百度云 BOS 具有公共读权限的 Bucket 所绑定的域名，带 http:// 或者 https://",
+			Key:         "public-bucket-domain",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateBos,
+		},
+
+		Config{
+			Title:       "私有Bucket",
+			Description: "百度云 BOS 创建的私有 Bucket",
+			Key:         "private-bucket",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateBos,
+		},
+		Config{
+			Title:       "私有Bucket域名",
+			Description: "百度云 BOS 创建的私有 Bucket 所绑定的域名，带 http:// 或者 https://",
+			Key:         "private-bucket-domain",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateBos,
+		},
+		Config{
+			Title:       "过期时间",
+			Description: "文档下载签名链接有效时长(秒)",
+			Key:         "expire",
+			Value:       "3600",
+			InputType:   InputNumber,
+			Category:    cateBos,
+		},
+	}
+
+	// 腾讯云
+	cateCos := string(StoreCos)
+	cfgCos := []Config{
+		Config{
+			Title:       "AccessKey",
+			Description: "AccessKey",
+			Key:         "access-key",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateCos,
+		},
+		Config{
+			Title:       "SecretKey",
+			Description: "SecretKey",
+			Key:         "secret-key",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateCos,
+		},
+		Config{
+			Title:       "AppID",
+			Description: "腾讯云 COS AppID",
+			Key:         "app-id",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateCos,
+		},
+		Config{
+			Title:       "区域",
+			Description: "COS 区域，即 Region",
+			Key:         "region",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateCos,
+		},
+		Config{
+			Title:       "公共读Bucket",
+			Description: "具有公共读权限的 Bucket",
+			Key:         "public-bucket",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateCos,
+		},
+		Config{
+			Title:       "公共读Bucket域名",
+			Description: "具有公共读权限的 Bucket 所绑定的域名，带 http:// 或者 https://",
+			Key:         "public-bucket-domain",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateCos,
+		},
+
+		Config{
+			Title:       "私有Bucket",
+			Description: "私有 Bucket",
+			Key:         "private-bucket",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateCos,
+		},
+		Config{
+			Title:       "私有Bucket域名",
+			Description: "私有 Bucket 所绑定的域名，带 http:// 或者 https://",
+			Key:         "private-bucket-domain",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateCos,
+		},
+		Config{
+			Title:       "过期时间",
+			Description: "文档下载签名链接有效时长(秒)",
+			Key:         "expire",
+			Value:       "3600",
+			InputType:   InputNumber,
+			Category:    cateCos,
+		},
+	}
+
+	// 华为云
+	cateObs := string(StoreObs)
+	cfgObs := []Config{
+		Config{
+			Title:       "AccessKey",
+			Description: "AccessKey",
+			Key:         "access-key",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateObs,
+		},
+		Config{
+			Title:       "SecretKey",
+			Description: "SecretKey",
+			Key:         "secret-key",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateObs,
+		},
+		Config{
+			Title:       "Endpoint",
+			Description: "endpoint",
+			Key:         "endpoint",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateObs,
+		},
+		Config{
+			Title:       "公共读Bucket",
+			Description: "具有公共读权限的 Bucket",
+			Key:         "public-bucket",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateObs,
+		},
+		Config{
+			Title:       "公共读Bucket域名",
+			Description: "具有公共读权限的 Bucket 所绑定的域名，带 http:// 或者 https://",
+			Key:         "public-bucket-domain",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateObs,
+		},
+
+		Config{
+			Title:       "私有Bucket",
+			Description: "私有 Bucket",
+			Key:         "private-bucket",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateObs,
+		},
+		Config{
+			Title:       "私有Bucket域名",
+			Description: "私有 Bucket 所绑定的域名，带 http:// 或者 https://",
+			Key:         "private-bucket-domain",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateObs,
+		},
+		Config{
+			Title:       "过期时间",
+			Description: "文档下载签名链接有效时长(秒)",
+			Key:         "expire",
+			Value:       "3600",
+			InputType:   InputNumber,
+			Category:    cateObs,
+		},
+	}
+
+	// Minio
+	cateMinio := string(StoreMinio)
+	cfgMinio := []Config{
+		Config{
+			Title:       "AccessKey",
+			Description: "Minio AccessKey",
+			Key:         "access-key",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateMinio,
+		},
+		Config{
+			Title:       "SecretKey",
+			Description: "Minio SecretKey",
+			Key:         "secret-key",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateMinio,
+		},
+		Config{
+			Title:       "Endpoint",
+			Description: "Minio endpoint",
+			Key:         "endpoint",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateMinio,
+		},
+		Config{
+			Title:       "公共读Bucket",
+			Description: "具有公共读权限的 Bucket",
+			Key:         "public-bucket",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateMinio,
+		},
+		Config{
+			Title:       "公共读Bucket域名",
+			Description: "具有公共读权限的 Bucket 所绑定的域名，带 http:// 或者 https://",
+			Key:         "public-bucket-domain",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateMinio,
+		},
+
+		Config{
+			Title:       "私有Bucket",
+			Description: "私有Bucket",
+			Key:         "private-bucket",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateMinio,
+		},
+		Config{
+			Title:       "私有Bucket域名",
+			Key:         "private-bucket-domain",
+			Description: "私有 Bucket 所绑定的域名，带 http:// 或者 https://",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateMinio,
+		},
+		Config{
+			Title:       "过期时间",
+			Description: "文档下载签名链接有效时长(秒)",
+			Key:         "expire",
+			Value:       "3600",
+			InputType:   InputNumber,
+			Category:    cateMinio,
+		},
+	}
+
+	// Qiniu
+	cateQiniu := string(StoreQiniu)
+	cfgQiniu := []Config{
+		Config{
+			Title:       "AccessKey",
+			Description: "AccessKey",
+			Key:         "access-key",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateQiniu,
+		},
+		Config{
+			Title:       "SecretKey",
+			Description: "SecretKey",
+			Key:         "secret-key",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateQiniu,
+		},
+		Config{
+			Title:       "公共读Bucket",
+			Description: "具有公共读权限的 Bucket",
+			Key:         "public-bucket",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateQiniu,
+		},
+		Config{
+			Title:       "公共读Bucket域名",
+			Description: "具有公共读权限的 Bucket 所绑定的域名，带 http:// 或者 https://",
+			Key:         "public-bucket-domain",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateQiniu,
+		},
+
+		Config{
+			Title:       "私有Bucket",
+			Description: "私有Bucket",
+			Key:         "private-bucket",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateQiniu,
+		},
+		Config{
+			Title:       "私有Bucket域名",
+			Description: "私有 Bucket 所绑定的域名，带 http:// 或者 https://",
+			Key:         "private-bucket-domain",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateQiniu,
+		},
+		Config{
+			Title:       "过期时间",
+			Description: "文档下载签名链接有效时长(秒)",
+			Key:         "expire",
+			Value:       "3600",
+			InputType:   InputNumber,
+			Category:    cateQiniu,
+		},
+	}
+
+	// 又拍云
+	cateUpyun := string(StoreUpyun)
+	cfgUpyun := []Config{
+		Config{
+			Title:       "Operator",
+			Description: "又拍云操作员",
+			Key:         "operator",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateUpyun,
+		},
+		Config{
+			Title:       "Password",
+			Description: "又拍云操作员密码",
+			Key:         "password",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateUpyun,
+		},
+		Config{
+			Title:       "公共读Bucket",
+			Description: "具有公共读权限的 Bucket",
+			Key:         "public-bucket",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateUpyun,
+		},
+		Config{
+			Title:       "公共读Bucket域名",
+			Description: "具有公共读权限的 Bucket 所绑定的域名，带 http:// 或者 https://",
+			Key:         "public-bucket-domain",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateUpyun,
+		},
+
+		Config{
+			Title:       "私有Bucket",
+			Description: "私有Bucket，需要URL签名才能访问",
+			Key:         "private-bucket",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateUpyun,
+		},
+		Config{
+			Title:       "私有Bucket Secret",
+			Description: "即 访问控制 的 Token 防盗链密钥",
+			Key:         "secret",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateUpyun,
+		},
+		Config{
+			Title:       "私有Bucket域名",
+			Description: "私有 Bucket 所绑定的域名，带 http:// 或者 https://",
+			Key:         "private-bucket-domain",
+			Value:       "",
+			InputType:   InputText,
+			Category:    cateUpyun,
+		},
+		Config{
+			Title:       "过期时间",
+			Description: "文档下载签名链接有效时长(秒)",
+			Key:         "expire",
+			Value:       "3600",
+			InputType:   InputNumber,
+			Category:    cateUpyun,
+		},
+	}
+
 	configs = append(configs, cfgEmail...)
-	configs = append(configs, cfgOss...)
 	configs = append(configs, cfgLogs...)
 	configs = append(configs, cfgDepend...)
 	configs = append(configs, cfgES...)
-	//注意：这里使用逐项写入，以便有升级的时候，存在了的配置项不再写入，不存在的则写入
-	//O.InsertMulti(len(configs), &configs)
+	configs = append(configs, cfgOss...)
+	configs = append(configs, cfgBos...)
+	configs = append(configs, cfgCos...)
+	configs = append(configs, cfgObs...)
+	configs = append(configs, cfgMinio...)
+	configs = append(configs, cfgQiniu...)
+	configs = append(configs, cfgUpyun...)
+
 	o := orm.NewOrm()
 	for _, cfg := range configs {
+		// 逐条写入数据库
+		if helper.Debug {
+			beego.Info("==如果因数据已存在而导致数据写入失败，则请忽略==")
+		}
 		o.Insert(&cfg)
+
 	}
-	//全局变量赋值
-	NewConfig().UpdateGlobal() //配置文件全局变量更新
+	o.QueryTable(NewConfig()).Filter("Category", "depend").Filter("Key__in", "svgo-on").Delete()
 }

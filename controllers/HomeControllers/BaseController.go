@@ -7,10 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"path/filepath"
-
-	"io/ioutil"
-
 	"github.com/TruthHun/DocHub/helper"
 	"github.com/TruthHun/DocHub/models"
 	"github.com/astaxie/beego"
@@ -42,7 +38,6 @@ func (this *BaseController) Prepare() {
 	this.Layout = "Home/" + this.TplTheme + "/layout.html"
 
 	//防止跨站攻击
-	//this.Xsrf()//在有post表单的页面添加，避免每次都生成
 	//检测用户是否已经在cookie存在登录
 	this.checkCookieLogin()
 
@@ -58,21 +53,19 @@ func (this *BaseController) Prepare() {
 	this.Sys, _ = models.NewSys().Get()
 	this.Data["Version"] = version
 	this.Data["Sys"] = this.Sys
-	this.Data["PreviewDomain"] = strings.TrimRight(helper.GetConfig("oss", "preview_url"), "/")
-	this.Data["Chanels"] = this.Chanels()
+	this.Data["Chanels"] = models.NewCategory().GetByPid(0, true)
 	this.Data["Pages"], _, _ = models.NewPages().List(beego.AppConfig.DefaultInt("pageslimit", 6), 1)
 	this.Data["AdminId"] = helper.Interface2Int(this.GetSession("AdminId"))
 	this.Data["CopyrightDate"] = time.Now().Format("2006")
-}
 
-//自定义的文档错误
-func (this *BaseController) ErrorDiy(status, redirect, msg interface{}, timewait int) {
-	this.TplPrefix = ""
-	this.Data["status"] = status
-	this.Data["redirect"] = redirect
-	this.Data["msg"] = msg
-	this.Data["timewait"] = timewait
-	this.TplName = "Base/error_diy.html"
+	this.Data["PreviewDomain"] = ""
+
+	if cs, err := models.NewCloudStore(false); err == nil {
+		this.Data["PreviewDomain"] = cs.GetPublicDomain()
+	} else {
+		helper.Logger.Error(err.Error())
+	}
+
 }
 
 //是否已经登录，如果已登录，则返回用户的id
@@ -97,16 +90,17 @@ func (this *BaseController) Xsrf() {
 func (this *BaseController) checkCookieLogin() {
 	secret := beego.AppConfig.DefaultString("CookieSecret", helper.DEFAULT_COOKIE_SECRET)
 	timestamp, ok := this.GetSecureCookie(secret, "uid")
-	if ok {
-		uid, ok := this.Ctx.GetSecureCookie(secret+timestamp, "token")
-		if ok && len(uid) > 0 {
-			if this.IsLogin = helper.Interface2Int(uid); this.IsLogin > 0 {
-				if info := models.NewUser().UserInfo(this.IsLogin); info.Status == false {
-					//被封禁的账号，重置cookie
-					this.ResetCookie()
-				}
-			}
-		} else {
+	if !ok {
+		return
+	}
+	uid, ok := this.Ctx.GetSecureCookie(secret+timestamp, "token")
+	if !ok || len(uid) == 0 {
+		this.ResetCookie()
+	}
+
+	if this.IsLogin = helper.Interface2Int(uid); this.IsLogin > 0 {
+		if info := models.NewUser().UserInfo(this.IsLogin); info.Status == false {
+			//被封禁的账号，重置cookie
 			this.ResetCookie()
 		}
 	}
@@ -128,58 +122,12 @@ func (this *BaseController) SetCookieLogin(uid interface{}) {
 	this.Ctx.SetSecureCookie(secret+timestamp, "token", fmt.Sprintf("%v", uid), expire)
 }
 
-//404
-func (this *BaseController) Error404() {
-	referer := this.Ctx.Request.Referer()
-	this.Layout = ""
-	this.Data["content"] = "Page Not Foud"
-	this.Data["code"] = "404"
-	this.Data["content_zh"] = "页面被外星人带走了"
-	this.Data["Referer"] = referer
-	if len(referer) > 0 {
-		this.Data["IsReferer"] = true
-	}
-	this.TplName = "error.html"
-}
-
-//501
-func (this *BaseController) Error501() {
-	this.Layout = ""
-	this.Data["code"] = "501"
-	this.Data["content"] = "Server Error"
-	this.Data["content_zh"] = "服务器被外星人戳炸了"
-	this.TplName = "error.html"
-}
-
-//数据库错误
-func (this *BaseController) ErrorDb() {
-	this.Layout = ""
-	this.Data["content"] = "Database is now down"
-	this.Data["content_zh"] = "数据库被外星人抢走了"
-	this.TplName = "error.html"
-}
-
-//获取频道
-func (this *BaseController) Chanels() []orm.Params {
-	key := "chanels"
-	cache, err := helper.CacheGet("key")
-	if fc, ok := cache.([]orm.Params); ok && err == nil && len(fc) > 0 {
-		return fc
-	}
-	params, rows, _ := models.GetList(models.GetTableCategory(), 1, 6, orm.NewCondition().And("Pid", 0), "Sort")
-	if rows > 0 {
-		helper.CacheSet(key, params, 10*time.Second)
-	}
-	return params
-}
-
 //校验文档是否已经存在
 func (this *BaseController) DocExist() {
 	if models.NewDocument().IsExistByMd5(this.GetString("md5")) > 0 {
 		this.ResponseJson(true, "文档存在")
-	} else {
-		this.ResponseJson(false, "文档不存在")
 	}
+	this.ResponseJson(false, "文档不存在")
 }
 
 //响应json
@@ -211,23 +159,11 @@ func (this *BaseController) Pages() {
 	this.Data["Seo"] = models.NewSeo().GetByPage("PC-Pages", page.Title, page.Keywords, page.Description, this.Sys.Site)
 	page.Vcnt += 1
 	orm.NewOrm().Update(&page, "Vcnt")
-	page.Content = models.NewOss().HandleContent(page.Content, true)
+	cs, _ := models.NewCloudStore(false)
+	page.Content = cs.ImageWithDomain(page.Content)
 
 	this.Data["Page"] = page
 	this.Data["Lists"], _, _ = models.NewPages().List(20, 1)
 	this.Data["PageId"] = "wenku-content"
 	this.TplName = "pages.html"
-}
-
-//静态文件
-func (this *BaseController) StaticFile() {
-	splat := this.GetString(":splat")
-	ext := strings.ToLower(strings.TrimSpace(filepath.Ext(splat)))
-	if ok, _ := helper.StaticExt[strings.ToLower(ext)]; ok && ext != ".conf" {
-		if b, err := ioutil.ReadFile(splat); err == nil {
-			this.Ctx.ResponseWriter.Write(b)
-			return
-		}
-	}
-	this.Error404()
 }

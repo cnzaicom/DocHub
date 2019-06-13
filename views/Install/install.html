@@ -7,20 +7,14 @@
     <title>程序安装 - Powered By DocHub</title>
     <meta name="keywords" content="DocHub,程序安装"/>
     <meta name="description" content="DocHub程序安装"/>
-    <!--<link rel="stylesheet" type="text/css" href="{{.TplStatic}}/css/bootstrap.min.css"/>-->
-    <link rel="stylesheet" href="//apps.bdimg.com/libs/bootstrap/3.3.0/css/bootstrap.css">
-    <!--<link rel="stylesheet" type="text/css" href="/static/Home/default/css/flat-ui.min.css"/>-->
-    <!--<link rel="stylesheet" href="//cdn.bootcss.com/flat-ui/2.2.2/css/flat-ui.min.css">-->
-    <link rel="stylesheet" href="//cdn.staticfile.org/flat-ui/2.3.0/css/flat-ui.min.css">
-    <!--<link rel="stylesheet" type="text/css" href="/static/Home/default/css/font-awesome.min.css"/>-->
-    <link rel="stylesheet" href="//cdn.bootcss.com/font-awesome/4.7.0/css/font-awesome.min.css">
+    <link rel="stylesheet" type="text/css" href="/static/Home/default/css/bootstrap.min.css"/>
+    <link rel="stylesheet" type="text/css" href="/static/Home/default/css/flat-ui.min.css"/>
+    <link rel="stylesheet" type="text/css" href="/static/Home/default/css/font-awesome.min.css"/>
     <link rel="stylesheet" type="text/css" href="/static/Common/css/jquery.toast.min.css"/>
     <link rel="stylesheet" type="text/css" href="/static/Home/default/css/dochub.css?version={{$.Version}}"/>
     <link rel="shortcut icon" href="/static/Home/default/img/favicon.ico">
-    <!--[if lt IE 9]>
-    <script src="//cdn.bootcss.com/html5shiv/3.7.2/html5shiv.min.js"></script>
-    <script src="//cdn.bootcss.com/respond.js/1.4.2/respond.min.js"></script>
-    <![endif]-->
+    <script src="/static/Common/js/html5shiv.min.js"></script>
+    <script src="/static/Common/js/respond.min.js"></script>
 </head>
 <body id="page-install">
 <div class="container">
@@ -36,7 +30,7 @@
                         <div class="form-group">
                             <label>数据库地址</label>
                             <input type="text" required name="host" autocomplete="off" class="form-control">
-                            <p class="help-block">请填写MySQL数据库地址，Docker部署程序时慎用localhost</p>
+                            <p class="help-block">请填写MySQL数据库地址</p>
                         </div>
                         <div class="form-group">
                             <label>数据库服务端口</label>
@@ -46,12 +40,16 @@
                         <div class="form-group">
                             <label>数据库名称</label>
                             <input type="text"  autocomplete="off"  name="database" value=""  class="form-control">
-                            <p class="help-block">请填写您预先创建的 <span class="text-danger">UTF8</span> 字符编码的数据库名称</p>
+                            <p class="help-block">请填写您预先创建的数据库名称</p>
                         </div>
                         <div class="form-group">
-                            <label>数据库表前缀</label>
-                            <input type="text"  autocomplete="off"  name="prefix" value="hc_"  class="form-control">
-                            <p class="help-block">如果您的表前缀为空，则默认使用 <span class="text-danger">hc_</span> 作为您的表前缀</p>
+                            <label>数据库字符编码</label>
+                            <select name="charset" class="form-control">
+                                <option value="">==请选择数据库字符编码==</option>
+                                <option value="utf8">utf8</option>
+                                <option value="utf8mb4">utf8mb4</option>
+                            </select>
+                            <p class="help-block">数据库字符编码仅支持 <span class="text-danger">utf8</span> 和 <span class="text-danger">utf8mb4</span> 两种字符编码，请确保您的数据库是 utf8或utf8mb4 字符编码</p>
                         </div>
                         <div class="form-group">
                             <label>数据库用户名</label>
@@ -79,12 +77,9 @@
         </div>
     </div>
 </div>
-<!--<script src="http://cdn.bootcss.com/jquery/1.11.1/jquery.min.js"></script>-->
-<script src="//apps.bdimg.com/libs/jquery/1.11.3/jquery.min.js"></script>
-<!--<script src="{{.TplStatic}}/js/bootstrap.min.js"></script>-->
-<script src="//apps.bdimg.com/libs/bootstrap/3.3.0/js/bootstrap.min.js"></script>
+<script src="/static/Common/js/jquery.min.js"></script>
+<script src="/static/Home/default/js/bootstrap.min.js"></script>
 <script src="/static/Common/js/jquery.toast.min.js"></script>
-<!--<script src="/static/Common/js/jquery.lazyload.min.js"></script>-->
 <script src="/static/Home/default/js/dochub.js?version={{$.Version}}"></script>
 </body>
 </html>

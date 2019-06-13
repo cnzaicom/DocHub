@@ -9,6 +9,7 @@ import (
 
 	"github.com/TruthHun/DocHub/helper"
 	"github.com/TruthHun/DocHub/models"
+	"github.com/astaxie/beego"
 	"github.com/astaxie/beego/orm"
 )
 
@@ -23,66 +24,63 @@ func (this *ViewController) Get() {
 		return
 	}
 
-	doc, rows, err := models.NewDocument().GetById(id)
-	if err != nil || rows != 1 {
-		this.Abort("404")
-	}
-	//文档已被删除
-	if fmt.Sprintf("%v", doc["Status"]) == "-1" {
+	doc, err := models.NewDocument().GetById(id)
+
+	// 文档不存在、查询错误、被删除，报 404
+	if err != nil || doc.Id <= 0 || doc.Status < models.DocStatusConverting {
 		this.Abort("404")
 	}
 
-	var chanelTitle, parentTitle, childrenTitle interface{}
-
-	breadcrumb, _, _ := models.GetList(models.GetTableCategory(), 1, 3, orm.NewCondition().And("Id__in", doc["Cid"], doc["ChanelId"], doc["Pid"]))
-	for _, v := range breadcrumb {
-		switch fmt.Sprintf("%v", v["Id"]) {
-		case fmt.Sprintf("%v", doc["ChanelId"]):
-			this.Data["CrumbChanel"] = v
-			chanelTitle = v["Title"]
-			this.Data["Chanel"] = v["Alias"]
-		case fmt.Sprintf("%v", doc["Pid"]):
-			this.Data["CrumbParent"] = v
-			parentTitle = v["Title"]
-		case fmt.Sprintf("%v", doc["Cid"]):
-			childrenTitle = v["Title"]
-			//热门文档，根据当前所属分类去获取
+	var cates []models.Category
+	cates, _ = models.NewCategory().GetCategoriesById(doc.Cid, doc.ChanelId, doc.Pid)
+	breadcrumb := make(map[string]models.Category)
+	for _, cate := range cates {
+		switch cate.Id {
+		case doc.ChanelId:
+			breadcrumb["Chanel"] = cate
+		case doc.Pid:
+			breadcrumb["Parent"] = cate
+		case doc.Cid:
 			TimeStart := int(time.Now().Unix()) - this.Sys.TimeExpireHotspot
-			//热门文档
-			this.Data["Hots"], _, _ = models.NewDocument().SimpleList(fmt.Sprintf("di.Cid=%v and di.TimeCreate>%v", doc["Cid"], TimeStart), 10, "Dcnt")
-			//最新文档
-			this.Data["News"], _, _ = models.NewDocument().SimpleList(fmt.Sprintf("di.Cid=%v", doc["Cid"]), 10, "Id")
-			this.Data["CrumbChildren"] = v
+			this.Data["Hots"], _, _ = models.NewDocument().SimpleList(fmt.Sprintf("di.Cid=%v and di.TimeCreate>%v", doc.Cid, TimeStart), 10, "Dcnt")
+			this.Data["Latest"], _, _ = models.NewDocument().SimpleList(fmt.Sprintf("di.Cid=%v", doc.Cid), 10, "Id")
+			breadcrumb["Child"] = cate
 		}
 	}
+	this.Data["Breadcrumb"] = breadcrumb
 
 	models.Regulate(models.GetTableDocumentInfo(), "Vcnt", 1, "`Id`=?", id)
-	this.Data["PageId"] = "wenku-content"
-	this.Data["Doc"] = doc
-	pages := helper.Interface2Int(doc["Page"])
-	PageShow := 5
-	if pages > PageShow {
-		this.Data["PreviewPages"] = make([]string, PageShow)
+
+	pageShow := 5
+	if doc.Page > pageShow {
+		this.Data["PreviewPages"] = make([]string, pageShow)
 	} else {
-		this.Data["PreviewPages"] = make([]string, pages)
+		this.Data["PreviewPages"] = make([]string, doc.Page)
 	}
-	this.Data["TotalPages"] = pages
-	this.Data["PageShow"] = PageShow
+	this.Data["PageShow"] = pageShow
+
+	this.Xsrf()
 	if this.Data["Comments"], _, err = models.NewDocumentComment().GetCommentList(id, 1, 10); err != nil {
 		helper.Logger.Error(err.Error())
 	}
-	seoTitle := fmt.Sprintf("[%v·%v·%v] ", chanelTitle, parentTitle, childrenTitle) + doc["Title"].(string)
-	seoKeywords := fmt.Sprintf("%v,%v,%v,", chanelTitle, parentTitle, childrenTitle) + doc["Keywords"].(string)
-	seoDesc := doc["Description"].(string)
+
+	content := models.NewDocText().GetDescByMd5(doc.Md5, 5000)
+	seoTitle := fmt.Sprintf("%v - %v · %v · %v ", doc.Title, breadcrumb["Chanel"].Title, breadcrumb["Parent"].Title, breadcrumb["Child"].Title)
+	seoKeywords := fmt.Sprintf("%v,%v,%v,", breadcrumb["Chanel"].Title, breadcrumb["Parent"].Title, breadcrumb["Child"].Title) + doc.Keywords
+	seoDesc := beego.Substr(doc.Description+content, 0, 255)
 	this.Data["Seo"] = models.NewSeo().GetByPage("PC-View", seoTitle, seoKeywords, seoDesc, this.Sys.Site)
-	this.Xsrf()
-	ext := fmt.Sprintf("%v", doc["Ext"])
+	this.Data["Content"] = content
 	this.Data["Reasons"] = models.NewSys().GetReportReasons()
-	if pages == 0 && (ext == "txt" || ext == "chm" || ext == "umd" || ext == "epub" || ext == "mobi") {
+	this.Data["IsViewer"] = true
+	this.Data["PageId"] = "wenku-content"
+	this.Data["Doc"] = doc
+
+	doc.Ext = strings.TrimLeft(doc.Ext, ".")
+	if doc.Page == 0 { //不能预览的文档
 		this.Data["OnlyCover"] = true
-		//不能预览的文档
 		this.TplName = "disabled.html"
 	} else {
+		this.Data["ViewAll"] = doc.PreviewPage == 0 || doc.PreviewPage >= doc.Page
 		this.TplName = "svg.html"
 	}
 
@@ -91,81 +89,26 @@ func (this *ViewController) Get() {
 //文档下载
 func (this *ViewController) Download() {
 	id, _ := this.GetInt(":id")
-	if id > 0 {
-		if this.IsLogin > 0 {
-			info, rows, err := models.NewDocument().GetById(id)
-			if err != nil {
-				helper.Logger.Error(err.Error())
-			}
-			if rows > 0 {
-				if helper.Interface2Int(info["Status"]) != -1 { //文档未被删除
-					//下载需要的金币[注意：price的值是负值，表示扣除金币]
-					price := -helper.Interface2Int(info["Price"])
-					free := models.NewFreeDown().IsFreeDown(this.IsLogin, id)
-					if free.Id > 0 {
-						if free.TimeCreate > int(time.Now().Unix())-this.Sys.FreeDay*24*3600 { //免费下载期限内
-							price = 0
-						}
-					}
-					if userinfo := models.NewUser().UserInfo(this.IsLogin); userinfo.Coin >= price {
-						//扣除金币
-						models.Regulate(models.GetTableUserInfo(), "Coin", price, fmt.Sprintf("Id=%v", info["Uid"]))
-						logs := models.CoinLog{
-							Uid:  this.IsLogin,
-							Coin: price,
-							Log:  fmt.Sprintf("下载文档(%v)，消耗 %v 个金币", info["Title"], price),
-						}
-						models.NewCoinLog().LogRecord(logs)
-						if price < 0 { //分享文档的用户金币增加
-							models.Regulate(models.GetTableUserInfo(), "Coin", -price, fmt.Sprintf("Id=%v", info["Uid"]))
-							logs = models.CoinLog{
-								Uid:  helper.Interface2Int(info["Uid"]),
-								Coin: -price,
-								Log:  fmt.Sprintf("文档(%v)被下载，获得 %v 个金币", info["Title"], -price),
-							}
-							models.NewCoinLog().LogRecord(logs)
-						}
-
-						file := fmt.Sprintf("%v.%v", info["Md5"], info["Ext"])
-						//设置附件名
-						models.NewOss().SetObjectMeta(file, fmt.Sprintf("%v.%v", info["Title"], info["Ext"]))
-						//链接签名
-						url := models.NewOss().BuildSign(file)
-						//文档下载次数+1
-						models.Regulate(models.GetTableDocumentInfo(), "Dcnt", 1, fmt.Sprintf("Id=%v", info["Id"]))
-						if price < 0 { //扣除了金币，则下载可以免费下载
-							if free.Id > 0 { //上次已经下载过该文档，但是过了免费期限了
-								models.UpdateByIds(models.GetTableFreeDown(), "TimeCreate", time.Now().Unix(), free.Id) //更新
-							} else { //插入
-								var freedoc = models.FreeDown{Uid: this.IsLogin, Did: id, TimeCreate: int(time.Now().Unix())}
-								orm.NewOrm().Insert(&freedoc)
-							}
-						}
-
-						this.ResponseJson(true, "下载链接获取成功", map[string]interface{}{"url": url})
-					} else {
-						this.ResponseJson(false, "您的金币余额不足，请通过签到或者分享文档，增加您的金币财富。")
-					}
-				} else {
-					this.ResponseJson(false, "您要下载的文档不存在")
-				}
-			} else {
-				this.ResponseJson(false, "您要下载的文档不存在")
-			}
-
-		} else {
-			this.ResponseJson(false, "请先登录")
-		}
-	} else {
-		this.ResponseJson(false, "参数不正确")
+	if id <= 0 {
+		this.ResponseJson(false, "文档id不正确")
 	}
+
+	if this.IsLogin == 0 {
+		this.ResponseJson(false, "请先登录")
+	}
+
+	link, err := models.NewUser().CanDownloadFile(this.IsLogin, id)
+	if err != nil {
+		this.ResponseJson(false, err.Error())
+	}
+	this.ResponseJson(true, "下载链接获取成功", map[string]interface{}{"url": link})
 }
 
 //是否可以免费下载
 func (this *ViewController) DownFree() {
 	if this.IsLogin > 0 {
 		did, _ := this.GetInt("id")
-		if free := models.NewFreeDown().IsFreeDown(this.IsLogin, did); free.Id > 0 && free.TimeCreate > int(time.Now().Unix())-this.Sys.FreeDay*24*3600 {
+		if free := models.NewFreeDown().IsFreeDown(this.IsLogin, did); free {
 			this.ResponseJson(true, fmt.Sprintf("您上次下载过当前文档，且仍在免费下载有效期(%v天)内，本次下载免费", this.Sys.FreeDay))
 		}
 	}

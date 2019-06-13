@@ -3,6 +3,7 @@ package models
 import (
 	"errors"
 
+	"github.com/TruthHun/DocHub/helper"
 	"github.com/astaxie/beego/orm"
 )
 
@@ -10,7 +11,7 @@ import (
 type CollectFolder struct {
 	Id          int    `orm:"column(Id)"`
 	Cover       string `orm:"column(Cover);size(50);default()"`        //文档收藏夹(专辑封面)
-	Title       string `orm:"column(Title);default(默认收藏夹)"`            //会员收藏文档的存放收藏夹
+	Title       string `orm:"column(Title);size(100);default(默认收藏夹)"`  //会员收藏文档的存放收藏夹
 	Description string `orm:"column(Description);size(512);default()"` //会员创建的收藏夹的描述
 	Uid         int    `orm:"column(Uid);index"`                       //归属于哪个会员的收藏夹
 	TimeCreate  int    `orm:"column(TimeCreate)"`                      //收藏夹创建时间
@@ -61,7 +62,7 @@ func GetTableCollect() string {
 //@param                err             返回错误
 func (this *Collect) Cancel(did, cid interface{}, uid int) (err error) {
 	var affected int64
-	if affected, err = orm.NewOrm().QueryTable(GetTableCollect()).Filter("Did", did).Filter("Cid", cid).Filter("Uid", uid).Delete(); err == nil && affected > 0 {
+	if affected, err = orm.NewOrm().QueryTable(GetTableCollect()).Filter("Did", did).Filter("Cid", cid).Delete(); err == nil && affected > 0 {
 		Regulate(GetTableCollectFolder(), "Cnt", -1, "Id=?", cid) //收藏夹收藏的文档数量-1
 		Regulate(GetTableDocumentInfo(), "Ccnt", -1, "Id=?", did) //文档被收藏次数-1
 	}
@@ -78,18 +79,45 @@ func (this *Collect) DelFolder(id, uid int) (err error) {
 		cf = CollectFolder{Id: id}
 		o  = orm.NewOrm()
 	)
-	if err = o.Read(&cf); err == nil && cf.Uid == uid {
-		if cf.Cnt > 0 {
-			err = errors.New("收藏夹删除失败：您要删除的收藏夹不为空")
-		} else {
-			if _, err = o.Delete(&cf, "Id"); err == nil {
-				if len(cf.Cover) > 0 {
-					go NewOss().DelFromOss(true, cf.Cover)
-				}
-				err = Regulate("user_info", "Collect", -1, "Uid=?", uid)
+	err = o.Read(&cf)
+	if err != nil {
+		return
+	}
+
+	if cf.Uid != uid {
+		return
+	}
+
+	if cf.Cnt > 0 {
+		err = errors.New("收藏夹删除失败：您要删除的收藏夹不为空")
+		return
+	}
+
+	o.Begin()
+	defer func() {
+		if err != nil {
+			o.Rollback()
+		}
+
+		o.Commit()
+
+		if len(cf.Cover) > 0 {
+			if cs, errCS := NewCloudStore(false); errCS != nil {
+				helper.Logger.Error(errCS.Error())
+			} else {
+				go cs.Delete(cf.Cover)
 			}
 		}
+
+	}()
+
+	if _, err = o.Delete(&cf, "Id"); err != nil {
+		return
 	}
+
+	sql := "update `%v` set `Collect`=`Collect`-1 where `Collect`>0 AND Id = ?"
+	_, err = o.Raw(sql, GetTableUserInfo(), uid).Exec()
+
 	return
 }
 

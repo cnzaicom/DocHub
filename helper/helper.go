@@ -1,9 +1,12 @@
 package helper
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/hex"
 	"fmt"
 	"html/template"
+	"image"
 	"math/rand"
 
 	"crypto/md5"
@@ -37,13 +40,15 @@ import (
 	"github.com/TruthHun/DocHub/helper/crawl"
 	"github.com/astaxie/beego"
 	"github.com/astaxie/beego/cache"
+	"github.com/disintegration/imaging"
 	"github.com/huichen/sego"
 	"rsc.io/pdf"
 )
 
 func init() {
 	//如果存在配置文件，则表示程序已经安装
-	if _, err := os.Stat("conf/app.conf"); err == nil {
+	_, err := os.Stat("conf/app.conf")
+	if err == nil {
 		IsInstalled = true
 	}
 	setDefaultConfig()
@@ -51,17 +56,18 @@ func init() {
 	for _, ext := range exts {
 		StaticExt[strings.ToLower(strings.TrimSpace(ext))] = true
 	}
+	if _, err = os.Stat(RootPath); err != nil {
+		err = os.MkdirAll(RootPath, os.ModePerm)
+		if err != nil {
+			Logger.Error(err.Error())
+			panic(err.Error())
+		}
+	}
 }
 
 //比较两个内容的字符串类型是否相等
 func Equal(itf1, itf2 interface{}) bool {
 	return fmt.Sprintf("%v", itf1) == fmt.Sprintf("%v", itf2)
-}
-
-//xmd5加密，扩展加密
-//@param            md5str          MD5字符串
-func Xmd5(md5str interface{}) string {
-	return fmt.Sprintf("%v", md5str)
 }
 
 //语言国际化，目前默认为中文
@@ -74,7 +80,7 @@ func I18n(tag string, lang ...string) string {
 
 //MD5加密函数
 //@str          string          需要进行加密的字符串
-func MyMD5(str string) string {
+func MD5Crypt(str string) string {
 	h := md5.New()
 	h.Write([]byte(str))
 	return hex.EncodeToString(h.Sum(nil))
@@ -353,7 +359,7 @@ type PdfRet struct {
 //@param            file            pdf文件
 //@return           pages           pdf文件页码
 //@return           err             错误
-func GetPdfPagesNum(file string) (pages int, err error) {
+func getPdfPagesNum(file string) (pages int, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = errors.New(fmt.Sprintf("%v", r))
@@ -363,72 +369,6 @@ func GetPdfPagesNum(file string) (pages int, err error) {
 	if reader, err := pdf.Open(file); err == nil {
 		pages = reader.NumPage()
 	}
-	return
-}
-
-//将PDF文件转成jpg图片格式。注意：如果pdf只有一页，则文件后缀不会出现"-0.jpg"这种情况，否则会出现"-0.jpg,-1.jpg"等
-//@param            coverFile       imagick可以转化成jpg的封面文件，如svg、pdf文件
-//@param            removeFile      最后是否删除原文件
-//@return           cover           封面文件
-//@return           err             错误
-func ConvertToJpeg(pdffile string, removeFile bool) (cover string, err error) {
-	//convert := beego.AppConfig.DefaultString("imagick", "convert")
-	convert := GetConfig("depend", "imagemagick", "convert")
-	cover = pdffile + ".jpg"
-	cmd := exec.Command(convert, "-density", "150", "-quality", "100", pdffile, cover)
-	if Debug {
-		beego.Debug("转化封面图片：", cmd.Args)
-	}
-	err = cmd.Run()
-	if err == nil && removeFile {
-		os.Remove(pdffile)
-	}
-	return cover, err
-}
-
-//office文档转pdf，返回转化后的文档路径和错误
-func OfficeToPdf(office string) (err error) {
-	//	soffice --headless --invisible --convert-to pdf doctest.docx
-	//soffice := beego.AppConfig.DefaultString("soffice", "soffice")
-	soffice := GetConfig("depend", "soffice", "soffice")
-	dir_slice := strings.Split(office, "/")
-	dir := strings.Join(dir_slice[0:(len(dir_slice)-1)], "/")
-	cmd := exec.Command(soffice, "--headless", "--invisible", "--convert-to", "pdf", office, "--outdir", dir)
-	if Debug {
-		Logger.Debug("office 文档转 PDF:", cmd.Args)
-	}
-	go func() { //超时关闭程序
-		expire := GetConfigInt64("depend", "soffice-expire")
-		if expire <= 0 {
-			expire = 1800
-		}
-		time.Sleep(time.Duration(expire) * time.Second)
-		cmd.Process.Kill()
-	}()
-	err = cmd.Run()
-	return
-}
-
-//非office文档(.txt,.mobi,.epub)转pdf文档
-func UnofficeToPdf(file string) (pdfFile string, err error) {
-	//calibre := beego.AppConfig.DefaultString("calibre", "ebook-convert")
-	calibre := GetConfig("depend", "calibre", "ebook-convert")
-	pdfFile = filepath.Dir(file) + "/" + strings.TrimSuffix(filepath.Base(file), filepath.Ext(file)) + ".pdf"
-	args := []string{
-		file,
-		pdfFile,
-		"--paper-size", "a4",
-		"--pdf-default-font-size", "16",
-		"--pdf-page-margin-bottom", "36",
-		"--pdf-page-margin-left", "36",
-		"--pdf-page-margin-right", "36",
-		"--pdf-page-margin-top", "36",
-	}
-	cmd := exec.Command(calibre, args...)
-	if Debug {
-		beego.Debug("非Office文档转成PDF：", cmd.Args)
-	}
-	err = cmd.Run()
 	return
 }
 
@@ -451,27 +391,6 @@ func ParseSvgWidthAndHeight(file string) (width, height int) {
 		}
 	} else {
 		Logger.Error(err.Error())
-	}
-	return
-}
-
-//压缩svg文件
-//@param			file			需要压缩的svg文件
-//@return			err				错误
-func CompressSvg(file string) (err error) {
-	var b []byte
-	if b, err = ioutil.ReadFile(file); err == nil {
-		str := string(b)
-		str = strings.Replace(str, "\t", "", -1)
-		str = strings.Replace(str, "\n", "", -1)
-		str = strings.Replace(str, "\r", "", -1)
-		//去除标签之间的空格，如果是存在代码预览的页面，不要替换空格，否则预览的代码会错乱
-		r, _ := regexp.Compile(">\\s{1,}<")
-		str = r.ReplaceAllString(str, "><")
-		//多个空格替换成一个空格
-		r2, _ := regexp.Compile("\\s{1,}")
-		str = r2.ReplaceAllString(str, " ")
-		err = ioutil.WriteFile(file, []byte(str), os.ModePerm)
 	}
 	return
 }
@@ -518,27 +437,33 @@ func ScanDir(dir string) (files []string) {
 }
 
 //统计PDF的页数
-//@param            filepath            文件路径
+//@param            file                文件路径
 //@return           pagenum             页码，当返回错误时，页码为0
 //@return           err                 错误
-func CountPdfPages(filepath string) (pagenum int, err error) {
-	if bs, err := ioutil.ReadFile(filepath); err != nil {
-		return pagenum, err
-	} else {
-		content := string(bs)
-		arr := strings.Split(content, "/Pages")
-		l := len(arr)
-		if l > 0 {
-			arr = strings.Split(arr[l-1], "endobj")
-			if l = len(arr); l > 0 {
-				return len(strings.Split(arr[0], "0 R")) - 1, nil
-			} else {
-				return 0, errors.New(fmt.Sprintf(`%v:"endobj"分割时失败`, filepath))
-			}
-		} else {
-			return 0, errors.New(fmt.Sprintf(`%v:"/Pages"分割时失败`, filepath))
-		}
+func CountPDFPages(file string) (pageNum int, err error) {
+	// 优先使用这种PDF分页统计的方式，如果PDF版本比支持，则再使用下一种PDF统计方式。所以这里报错了的话，不返回
+	pageNum, err = getPdfPagesNum(file)
+	if err == nil {
+		return
 	}
+
+	var p []byte
+	p, err = ioutil.ReadFile(file)
+	if err != nil {
+		return
+	}
+
+	content := string(p)
+	arr := strings.Split(content, "/Pages")
+	l := len(arr)
+	if l > 0 {
+		arr = strings.Split(arr[l-1], "endobj")
+		if l = len(arr); l > 0 {
+			return len(strings.Split(arr[0], "0 R")) - 1, nil
+		}
+		return 0, errors.New(fmt.Sprintf(`%v:"endobj"分割时失败`, file))
+	}
+	return 0, errors.New(fmt.Sprintf(`%v:"/Pages"分割时失败`, file))
 }
 
 //文档评分处理
@@ -756,6 +681,7 @@ func DownFile(fileUrl, savePath string, cookies string) (md5str, localFile, file
 	if err != nil {
 		return
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		err = errors.New(fmt.Sprintf("HTTP响应头错误：%v。文件下载地址：%v", resp.Status, fileUrl))
 		return
@@ -769,7 +695,7 @@ func DownFile(fileUrl, savePath string, cookies string) (md5str, localFile, file
 	}
 	ext = strings.ToLower(ext)
 	os.MkdirAll(savePath, 0777)
-	tmpFile := strings.TrimSuffix(savePath, "/") + "/" + MyMD5(filename) + ext
+	tmpFile := strings.TrimSuffix(savePath, "/") + "/" + MD5Crypt(filename) + ext
 	if err = req.ToFile(tmpFile); err != nil {
 		return
 	}
@@ -815,31 +741,6 @@ func UpperFirst(str string) string {
 	return str
 }
 
-//获取PDF中指定页面的文本内容
-//@param			file		PDF文件
-//@param			from		起始页
-//@param			to			截止页
-func ExtractPdfText(file string, from, to int) (content string) {
-	//pdftotext := beego.AppConfig.DefaultString("pdftotext", "pdftotext")
-	pdftotext := GetConfig("depend", "pdftotext")
-	textfile := file + ".txt"
-	defer os.Remove(textfile)
-	args := []string{"-f", strconv.Itoa(from), "-l", strconv.Itoa(to), file, textfile}
-	if err := exec.Command(pdftotext, args...).Run(); err != nil {
-		Logger.Error(err.Error())
-	} else {
-		if b, err := ioutil.ReadFile(textfile); err == nil {
-			content = string(b)
-			content = strings.Replace(content, "\t", " ", -1)
-			content = strings.Replace(content, "\n", " ", -1)
-			content = strings.Replace(content, "\r", " ", -1)
-		} else {
-			Logger.Error(err.Error())
-		}
-	}
-	return
-}
-
 //页数处理，处理页数为0或者页数为空的时候的显示
 func HandlePageNum(PageNum interface{}) string {
 	pn := strings.TrimSpace(fmt.Sprintf("%v", PageNum))
@@ -853,8 +754,80 @@ func HandlePageNum(PageNum interface{}) string {
 //@param            input           需要压缩的原文件
 //@param            output          压缩后的文件路径
 //@param            err             压缩错误
-func SvgoCompress(input, output string) (err error) {
-	svgo := GetConfig("depend", "svgo", "svgo")
-	args := []string{input, "-o", output}
-	return exec.Command(svgo, args...).Run()
+func CompressBySVGO(input, output string) (err error) {
+	svgo := strings.TrimSpace(GetConfig("depend", "svgo", "svgo"))
+	args := []string{"-i", input, "-o", output}
+	if strings.HasPrefix(svgo, "sudo") {
+		args = append([]string{strings.TrimPrefix(svgo, "sudo")}, args...)
+		svgo = "sudo"
+	}
+	err = exec.Command(svgo, args...).Run()
+	if err != nil {
+		err = CompressSVG(input, output)
+	}
+	return
+}
+
+// 使用GZIP压缩文件
+func CompressByGzip(file string) (err error) {
+	var bs []byte
+	bs, err = ioutil.ReadFile(file)
+	if err != nil {
+		return
+	}
+	var by bytes.Buffer
+	w := gzip.NewWriter(&by)
+	defer w.Close()
+	w.Write(bs)
+	w.Flush()
+	err = ioutil.WriteFile(file, by.Bytes(), 0777)
+	return
+}
+
+// 图片缩放居中裁剪
+//图片缩放居中裁剪
+//@param        file        图片文件
+//@param        width       图片宽度
+//@param        height      图片高度
+//@return       err         错误
+func CropImage(file string, width, height int) (err error) {
+	var img image.Image
+	img, err = imaging.Open(file)
+	if err != nil {
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(file))
+	switch ext {
+	case ".jpeg", ".jpg", ".png", ".gif":
+		img = imaging.Fill(img, width, height, imaging.Center, imaging.CatmullRom)
+	default:
+		err = errors.New("unsupported image format")
+		return
+	}
+	return imaging.Save(img, file)
+}
+
+// 删除切片中的指定key，并返回
+func DeleteSlice(slice []string, keys ...string) []string {
+	if len(keys) == 0 {
+		return slice
+	}
+
+	for _, key := range keys {
+		var tmpSlice []string
+		for _, item := range slice {
+			if item != key {
+				tmpSlice = append(tmpSlice, item)
+			}
+		}
+		slice = tmpSlice
+	}
+
+	return slice
+}
+
+func ComputeFileMD5(file io.Reader) string {
+	md5h := md5.New()
+	io.Copy(md5h, file)
+	return fmt.Sprintf("%x", md5h.Sum(nil))
 }
